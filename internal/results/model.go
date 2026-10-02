@@ -19,6 +19,9 @@ const (
 	VerdictFailLatency   Verdict = "FAIL_LATENCY"
 	VerdictFailErrors    Verdict = "FAIL_ERRORS"
 	VerdictFailGenerator Verdict = "FAIL_GENERATOR"
+	// VerdictFailNoCapacity is reported by a capacity search that could not find
+	// any passing rate, because even search.start_rate breached the SLOs.
+	VerdictFailNoCapacity Verdict = "FAIL_NO_CAPACITY"
 )
 
 // OK reports whether the verdict is a pass.
