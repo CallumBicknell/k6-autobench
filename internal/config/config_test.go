@@ -301,3 +301,219 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("Load() = nil for a missing file, want error")
 	}
 }
+
+func TestApplyDefaultsSearchDefaults(t *testing.T) {
+	cfg := &Config{Run: Run{Rate: 1000}}
+	cfg.ApplyDefaults()
+
+	s := cfg.Search
+	if s.Strategy != "adaptive" {
+		t.Errorf("strategy = %q, want adaptive", s.Strategy)
+	}
+	if s.StartRate != 1000 {
+		t.Errorf("start_rate = %d, want run.rate 1000", s.StartRate)
+	}
+	if s.IncreaseFactor != DefaultIncreaseFactor {
+		t.Errorf("increase_factor = %g, want %g", s.IncreaseFactor, DefaultIncreaseFactor)
+	}
+	if s.Resolution != DefaultResolution {
+		t.Errorf("resolution = %d, want %d", s.Resolution, DefaultResolution)
+	}
+	if s.ProbeDuration.Duration != DefaultProbeDuration {
+		t.Errorf("probe_duration = %v, want %v", s.ProbeDuration, DefaultProbeDuration)
+	}
+	if s.ConfirmationRuns != 1 || s.FailureConfirmation != 1 {
+		t.Errorf("confirmation = %d/%d, want 1/1", s.ConfirmationRuns, s.FailureConfirmation)
+	}
+	if s.MaxProbes != DefaultMaxProbes {
+		t.Errorf("max_probes = %d, want %d", s.MaxProbes, DefaultMaxProbes)
+	}
+	// Validation is opt-in: a search without one still reports a verdict from
+	// its own findings.
+	if cfg.Validation.Duration.Duration != 0 {
+		t.Errorf("validation.duration = %v, want 0 (disabled)", cfg.Validation.Duration)
+	}
+}
+
+// TestApplyDefaultsKeepsPinnedVUsAcrossCalls guards a real bug: the second
+// ApplyDefaults (which buildConfig performs after applying flag overrides) saw
+// the auto-sized pool it had just filled in and mistook it for a user choice,
+// which disabled per-probe sizing for the whole search.
+func TestApplyDefaultsKeepsPinnedVUsAcrossCalls(t *testing.T) {
+	cfg := &Config{Run: Run{Rate: 500}}
+	cfg.ApplyDefaults()
+	cfg.ApplyDefaults()
+
+	if got := cfg.ForRate(5000, 0).LoadGenerator.PreAllocatedVUs; got != 500 {
+		t.Errorf("pre_allocated_vus = %d, want 500 (auto-sized for the probe rate)", got)
+	}
+
+	pinned := &Config{Run: Run{Rate: 500}, LoadGenerator: LoadGenerator{PreAllocatedVUs: 7, MaxVUs: 9}}
+	pinned.ApplyDefaults()
+	pinned.ApplyDefaults()
+
+	if got := pinned.ForRate(5000, 0).LoadGenerator; got.PreAllocatedVUs != 7 || got.MaxVUs != 9 {
+		t.Errorf("pool = %d/%d, want the pinned 7/9", got.PreAllocatedVUs, got.MaxVUs)
+	}
+}
+
+func TestForRateSizesPoolFromLatency(t *testing.T) {
+	cfg := &Config{Run: Run{Rate: 500}}
+	cfg.ApplyDefaults()
+
+	// No observed latency yet: fall back to the 100ms assumption.
+	if got := cfg.ForRate(2000, 0).LoadGenerator; got.PreAllocatedVUs != 200 || got.MaxVUs != 800 {
+		t.Errorf("pool = %d/%d, want 200/800", got.PreAllocatedVUs, got.MaxVUs)
+	}
+	// A slow system needs more concurrency for the same rate.
+	if got := cfg.ForRate(2000, 300).LoadGenerator; got.PreAllocatedVUs != 600 || got.MaxVUs != 2400 {
+		t.Errorf("pool = %d/%d, want 600/2400", got.PreAllocatedVUs, got.MaxVUs)
+	}
+	// The original config must be untouched.
+	if cfg.LoadGenerator.PreAllocatedVUs != 50 {
+		t.Errorf("original pool changed to %d", cfg.LoadGenerator.PreAllocatedVUs)
+	}
+}
+
+func TestForRatePinsRateAndTimeUnit(t *testing.T) {
+	cfg := &Config{Run: Run{Rate: 500, TimeUnit: "1m"}}
+	cfg.ApplyDefaults()
+
+	probe := cfg.ForRate(300, 0)
+	if probe.Run.Rate != 300 || probe.Run.TimeUnit != "1s" {
+		t.Errorf("probe run = %d/%s, want 300/1s", probe.Run.Rate, probe.Run.TimeUnit)
+	}
+	if cfg.Run.Rate != 500 || cfg.Run.TimeUnit != "1m" {
+		t.Errorf("original run changed to %d/%s", cfg.Run.Rate, cfg.Run.TimeUnit)
+	}
+}
+
+func TestForRateHonoursPinnedPool(t *testing.T) {
+	cfg := &Config{Run: Run{Rate: 500}, LoadGenerator: LoadGenerator{PreAllocatedVUs: 40, MaxVUs: 120}}
+	cfg.ApplyDefaults()
+
+	if got := cfg.ForRate(20000, 0).LoadGenerator; got.PreAllocatedVUs != 40 || got.MaxVUs != 120 {
+		t.Errorf("pool = %d/%d, want the pinned 40/120", got.PreAllocatedVUs, got.MaxVUs)
+	}
+}
+
+// TestForRateHonoursExplicitMaxOnly: a user ceiling must win over the estimate,
+// since k6 requires pre-allocated <= max.
+func TestForRateHonoursExplicitMaxOnly(t *testing.T) {
+	cfg := &Config{Run: Run{Rate: 500}, LoadGenerator: LoadGenerator{MaxVUs: 300}}
+	cfg.ApplyDefaults()
+
+	got := cfg.ForRate(5000, 0).LoadGenerator
+	if got.MaxVUs != 300 {
+		t.Errorf("max_vus = %d, want the pinned 300", got.MaxVUs)
+	}
+	if got.PreAllocatedVUs != 300 {
+		t.Errorf("pre_allocated_vus = %d, want it clamped to the ceiling 300", got.PreAllocatedVUs)
+	}
+}
+
+func TestVULimits(t *testing.T) {
+	unpinned := &Config{Run: Run{Rate: 100}}
+	unpinned.ApplyDefaults()
+	if pre, max := unpinned.VULimits(); pre != 0 || max != 0 {
+		t.Errorf("limits = %d/%d, want 0/0 for an auto-sized pool", pre, max)
+	}
+
+	pinned := &Config{Run: Run{Rate: 100}, LoadGenerator: LoadGenerator{PreAllocatedVUs: 20, MaxVUs: 80}}
+	pinned.ApplyDefaults()
+	if pre, max := pinned.VULimits(); pre != 20 || max != 80 {
+		t.Errorf("limits = %d/%d, want the pinned 20/80", pre, max)
+	}
+
+	partial := &Config{Run: Run{Rate: 100}, LoadGenerator: LoadGenerator{MaxVUs: 80}}
+	partial.ApplyDefaults()
+	if pre, max := partial.VULimits(); pre != 0 || max != 80 {
+		t.Errorf("limits = %d/%d, want 0/80 for a pinned ceiling only", pre, max)
+	}
+}
+
+func TestValidateModeCapacity(t *testing.T) {
+	valid := func() *Config {
+		cfg := &Config{Target: Target{BaseURL: "http://localhost:1"}}
+		cfg.ApplyDefaults()
+		cfg.Search.StartRate = 500
+		return cfg
+	}
+
+	if err := valid().ValidateMode(ModeCapacity); err != nil {
+		t.Errorf("ValidateMode(capacity) = %v, want nil", err)
+	}
+	// A capacity search needs no run.rate or run.duration.
+	if err := valid().ValidateMode(ModeFixed); err == nil {
+		t.Error("ValidateMode(fixed) = nil, want an error for a missing run.rate")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "no start rate", mutate: func(c *Config) { c.Search.StartRate = 0; c.Run.Rate = 0 }},
+		{name: "increase factor at 1", mutate: func(c *Config) { c.Search.IncreaseFactor = 1 }},
+		{name: "negative resolution", mutate: func(c *Config) { c.Search.Resolution = -1 }},
+		{name: "zero probe duration", mutate: func(c *Config) { c.Search.ProbeDuration.Duration = 0 }},
+		{name: "negative warmup", mutate: func(c *Config) { c.Search.Warmup.Duration = -time.Second }},
+		{name: "zero confirmation runs", mutate: func(c *Config) { c.Search.ConfirmationRuns = 0 }},
+		{name: "negative max rate", mutate: func(c *Config) { c.Search.MaxRate = -1 }},
+		{name: "negative max probes", mutate: func(c *Config) { c.Search.MaxProbes = -1 }},
+		{name: "negative vu growth", mutate: func(c *Config) { c.Search.MaxVUGrowth = -1 }},
+		{name: "safety margin above 1", mutate: func(c *Config) { c.Validation.SafetyMargin = 1.2 }},
+		{name: "unknown strategy", mutate: func(c *Config) { c.Search.Strategy = "magic" }},
+		{name: "unparseable validation rate", mutate: func(c *Config) { c.Validation.Rate = "fast" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid()
+			tc.mutate(cfg)
+			if err := cfg.ValidateMode(ModeCapacity); err == nil {
+				t.Error("ValidateMode(capacity) = nil, want an error")
+			}
+		})
+	}
+}
+
+func TestValidateModeUnknown(t *testing.T) {
+	cfg := &Config{Target: Target{BaseURL: "http://localhost:1"}}
+	cfg.ApplyDefaults()
+	if err := cfg.ValidateMode(Mode("sideways")); err == nil {
+		t.Error("ValidateMode(sideways) = nil, want an error")
+	}
+}
+
+func TestValidationRateOverride(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{in: "", want: 0},
+		{in: "discovered", want: 0},
+		{in: "Discovered", want: 0},
+		{in: "  discovered  ", want: 0},
+		{in: "5000", want: 5000},
+		{in: "fast", wantErr: true},
+		{in: "0", wantErr: true},
+		{in: "-5", wantErr: true},
+	}
+	for _, tc := range tests {
+		cfg := &Config{Validation: Validation{Rate: tc.in}}
+		got, err := cfg.ValidationRateOverride()
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("rate %q: got %d, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("rate %q: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("rate %q: got %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}

@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,23 @@ func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(d.Duration
 // DefaultPercentiles are collected when the config specifies none.
 func DefaultPercentiles() []float64 { return []float64{50, 75, 90, 95, 99, 99.9} }
 
+// Capacity-search defaults. They are deliberately conservative: a search with
+// the defaults brackets, refines and finishes in a few minutes.
+const (
+	// DefaultIncreaseFactor multiplies the rate after each passing probe.
+	DefaultIncreaseFactor = 1.5
+	// DefaultResolution is how narrow the final bracket must be, in iterations
+	// per second.
+	DefaultResolution = 50
+	// DefaultProbeDuration is how long each measurement lasts.
+	DefaultProbeDuration = 60 * time.Second
+	// DefaultMaxProbes caps the number of measurements a search may take.
+	DefaultMaxProbes = 32
+	// defaultIterationMs is the per-iteration latency assumed when sizing the VU
+	// pool before anything has been measured.
+	defaultIterationMs = 100
+)
+
 // Config is the root of an autobench configuration file.
 type Config struct {
 	Name          string        `yaml:"name"`
@@ -58,7 +76,26 @@ type Config struct {
 	Percentiles   []float64     `yaml:"percentiles"`
 	Validation    Validation    `yaml:"validation"`
 	LoadGenerator LoadGenerator `yaml:"load_generator"`
+
+	// preAllocatedExplicit and maxVUsExplicit record whether the user pinned the
+	// VU pool. When they did not, the capacity search re-sizes the pool for
+	// every probe rate via ForRate.
+	//
+	// They are captured once, by the first ApplyDefaults, because later calls
+	// fill the pool in with auto-sized values that must not be mistaken for
+	// user choices.
+	preAllocatedExplicit bool
+	maxVUsExplicit       bool
+	defaultsApplied      bool
 }
+
+// PinPreAllocatedVUs marks the pre-allocated pool as user-controlled, so ForRate
+// stops re-sizing it.
+func (c *Config) PinPreAllocatedVUs() { c.preAllocatedExplicit = true }
+
+// PinMaxVUs marks the maximum pool as user-controlled, so ForRate stops
+// re-sizing it.
+func (c *Config) PinMaxVUs() { c.maxVUsExplicit = true }
 
 // Target describes the system under test.
 type Target struct {
@@ -120,23 +157,58 @@ type LatencyThresholds struct {
 	P999 *LatencyThreshold `yaml:"p99.9"`
 }
 
-// Search configures the adaptive capacity search. Reserved for V0.2; it is
-// decoded so that forward-looking configs parse cleanly.
+// Search configures the adaptive capacity search driven by `autobench capacity`.
+//
+// See PLAN-OUTLINE.md §12–§18: the search grows the rate exponentially until a
+// probe fails, bisects the bracket down to Resolution, then optionally
+// validates the result.
 type Search struct {
-	Strategy         string   `yaml:"strategy"`
-	StartRate        int      `yaml:"start_rate"`
-	IncreaseFactor   float64  `yaml:"increase_factor"`
-	Resolution       int      `yaml:"resolution"`
-	ProbeDuration    Duration `yaml:"probe_duration"`
-	Warmup           Duration `yaml:"warmup"`
-	ConfirmationRuns int      `yaml:"confirmation_runs"`
+	Strategy            string   `yaml:"strategy"`
+	StartRate           int      `yaml:"start_rate"`
+	IncreaseFactor      float64  `yaml:"increase_factor"`
+	Resolution          int      `yaml:"resolution"`
+	ProbeDuration       Duration `yaml:"probe_duration"`
+	Warmup              Duration `yaml:"warmup"`
+	ConfirmationRuns    int      `yaml:"confirmation_runs"`
+	FailureConfirmation int      `yaml:"failure_confirmation"`
+	MaxRate             int      `yaml:"max_rate"`
+	MaxProbes           int      `yaml:"max_probes"`
+	MaxVUGrowth         int      `yaml:"max_vu_growth"`
 }
 
-// Validation configures the post-search validation run. Reserved for V0.3.
+// Validation configures the post-search validation run that confirms the
+// discovered capacity (PLAN-OUTLINE.md §13–§14).
 type Validation struct {
 	Rate                  string   `yaml:"rate"`
 	Duration              Duration `yaml:"duration"`
 	SafetyMargin          float64  `yaml:"safety_margin"`
 	Window                Duration `yaml:"window"`
 	RequireAllWindowsPass bool     `yaml:"require_all_windows_pass"`
+}
+
+// Mode selects what the CLI does with a configuration.
+type Mode string
+
+// Supported modes.
+const (
+	// ModeFixed runs a single measurement at run.rate for run.duration.
+	ModeFixed Mode = "fixed"
+	// ModeCapacity runs the adaptive capacity search.
+	ModeCapacity Mode = "capacity"
+)
+
+// ValidationRateOverride interprets validation.rate. An empty value or
+// "discovered" returns 0, meaning "derive the rate from the capacity the search
+// found"; a bare positive integer pins the rate explicitly.
+func (c *Config) ValidationRateOverride() (int, error) {
+	s := strings.TrimSpace(c.Validation.Rate)
+	switch strings.ToLower(s) {
+	case "", "discovered":
+		return 0, nil
+	}
+	rate, err := strconv.Atoi(s)
+	if err != nil || rate <= 0 {
+		return 0, fmt.Errorf("validation.rate %q must be \"discovered\" or a positive integer", c.Validation.Rate)
+	}
+	return rate, nil
 }
