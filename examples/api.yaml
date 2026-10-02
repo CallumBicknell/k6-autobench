@@ -1,0 +1,64 @@
+name: social-api
+
+target:
+  base_url: http://localhost:3000
+
+# Each iteration picks exactly one weighted request. With 4 requests and
+# rate 500, an iteration is still one HTTP call, so 500 iterations/s == 500 RPS.
+workload:
+  type: http
+  requests:
+    - name: feed
+      method: GET
+      path: /feed
+      weight: 50
+
+    - name: post
+      method: GET
+      path: /posts/123
+      weight: 25
+
+    - name: like
+      method: POST
+      path: /posts/123/like
+      weight: 15
+
+    - name: create_post
+      method: POST
+      path: /posts
+      weight: 10
+      body: '{"title":"hello"}'
+      headers:
+        Content-Type: application/json
+
+run:
+  rate: 500
+  duration: 30s
+  time_unit: 1s
+
+# p50/p75/p90/p95/p99/p99.9 are the defaults; list them to be explicit.
+percentiles:
+  - 50
+  - 75
+  - 90
+  - 95
+  - 99
+  - 99.9
+
+thresholds:
+  error_rate:
+    max: 0.01 # 1%
+
+  latency:
+    p50:
+      max: 100ms
+    p95:
+      max: 500ms
+    p99:
+      max: 1s
+
+# Omit load_generator to auto-size the VU pool from run.rate. Sizing assumes
+# ~100ms per iteration; autobench warns if the generator saturates.
+# load_generator:
+#   pre_allocated_vus: 100
+#   max_vus: 400

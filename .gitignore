@@ -1,0 +1,12 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# graft's editor/agent integration — regenerated per machine by `graft init`
+# (the helper scripts bake in absolute paths to the local graft install).
+/.claude/
+
+# build + run artifacts
+/bin/
+/results/
+/result.json
+/summary.json
