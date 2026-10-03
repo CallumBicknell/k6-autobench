@@ -71,6 +71,7 @@ func capacityCommand(args []string) int {
 	fs.StringVar(&htmlOut, "html", "", "write a self-contained HTML report to this path")
 	fs.StringVar(&outDir, "out-dir", "", "write the config, manifest, per-probe results and reports to this directory")
 	fs.BoolVar(&noColor, "no-color", false, "disable coloured output")
+	registerAnalysisFlags(fs, &ov)
 	fs.Usage = func() { capacityUsage(fs) }
 
 	if code := parseFlags(fs, args, &ov.configPath); code != exitPass {

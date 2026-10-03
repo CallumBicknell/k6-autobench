@@ -7,10 +7,10 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.4** — `autobench run` (fixed rate) and `autobench capacity`
-> (adaptive search) report latency, per-endpoint breakdowns, JSON and a
-> self-contained HTML report with rate/latency charts. Windowed analysis exposes
-> collapses that an average hides. See `PLAN-OUTLINE.md`.
+> **Status: V0.5** — `autobench run` (fixed rate) and `autobench capacity`
+> (adaptive search) over weighted request pools or multi-step journeys, with
+> per-endpoint breakdowns, windowed latency analysis, JSON and a self-contained
+> HTML report. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -320,18 +320,88 @@ Unknown config keys are rejected, so typos fail fast.
 
 ### Iterations vs requests
 
-k6's arrival-rate executors control **iterations**, not HTTP requests. In V0.1 an
-iteration performs exactly one HTTP call, so `rate` is also the request rate. A
-future release will support multi-request user journeys and report the two rates
-separately.
+k6's arrival-rate executors control **iterations**, not HTTP requests, so
+autobench always reports both rates.
+
+A **weighted pool** is the default: each iteration performs exactly one of the
+configured requests, chosen at random by weight. One iteration is one HTTP call,
+so 500 iterations/s is 500 requests/s.
+
+```yaml
+workload:
+  requests:
+    - name: feed
+      method: GET
+      path: /feed
+      weight: 50
+    - name: like
+      method: POST
+      path: /posts/1/like
+      weight: 15
+```
+
+A **journey** is an ordered sequence: each iteration performs every step.
+
+```yaml
+workload:
+  journey:
+    - name: browse
+      method: GET
+      path: /feed
+    - name: read
+      method: GET
+      path: /posts/1
+    - name: like
+      method: POST
+      path: /posts/1/like
+```
+
+One iteration is now one call *per step*, so the report shows both rates and the
+end-to-end journey latency:
+
+```
+  Workload      checkout-journey (4-step journey)
+  Rate          100 iterations/1s  (= 400 requests/1s)
+  ...
+  Requests      2,400  (392.4/s)
+  Iterations    600  (98.1/s)
+
+  Latency
+    p95       42.3ms
+
+  Journey latency (end to end, all steps)
+    avg       125.7ms
+    p95       127.8ms
+
+  REQUEST                REQS   ERRORS       avg       p95       p99
+  browse                  600        0     0.7ms     1.0ms         -
+  read                    600        0    41.4ms    42.5ms         -
+  like                    600        0    41.2ms    41.9ms         -
+  create                  600        0    41.4ms    42.7ms         -
+```
+
+The per-step table is what makes a journey actionable: the aggregate p95 above
+says 42ms, but `browse` is 60x faster than the other three steps.
+
+`requests` and `journey` are mutually exclusive — allowing both would make "what
+does one iteration do?" ambiguous. Step names tag the metrics, so they must be
+unique. `weight` is ignored for journey steps.
+
+`autobench capacity` searches in iterations per second too, and reports the
+request rate alongside:
+
+```
+  Capacity      487 iterations/s  (= 1,948 requests/s)
+```
 
 ### VU sizing
 
 Omit `load_generator` and `autobench run` sizes the pool from `run.rate`
-(assuming ~100ms per iteration); `autobench capacity` re-sizes it per probe from
-the latency it observes. If k6 runs out of VUs or drops iterations, autobench
-detects it and reports `FAIL_GENERATOR` rather than misreading the load
-generator as the bottleneck.
+(assuming ~100ms per HTTP call, so a 4-step journey gets 4x the pool);
+`autobench capacity` re-sizes it per probe from the latency it observes — for a
+journey, the end-to-end iteration time, which is what occupies a VU. If k6 runs
+out of VUs or drops iterations, autobench detects it and reports
+`FAIL_GENERATOR` rather than misreading the load generator as the bottleneck.
 
 ## Output
 

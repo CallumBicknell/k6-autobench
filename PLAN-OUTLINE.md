@@ -12,6 +12,8 @@
 > - **V0.4 — done.** Windowed analysis: per-window percentiles from k6's sample
 >   stream, `analysis.require_all_windows_pass`, latency-over-time charts.
 >   (`internal/metrics`, `internal/results`, `internal/report`.)
+> - **V0.5 — done.** Multi-step journeys (`workload.journey`), with iteration rate
+>   and request rate reported separately, and end-to-end journey latency.
 >
 > Deviations worth knowing, and why:
 >
@@ -646,6 +648,9 @@ This is much more useful than hammering one endpoint.
 ---
 
 # 11. Very important: RPS vs iterations
+
+**Implemented.** `workload.journey` makes an iteration perform every step, and
+the report states both rates: `100 iterations/1s (= 400 requests/1s)`.
 
 You need to define this carefully.
 

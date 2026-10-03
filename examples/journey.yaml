@@ -1,0 +1,50 @@
+name: checkout-journey
+
+target:
+  base_url: http://localhost:3000
+
+# A journey: each iteration performs every step, in order. One iteration is four
+# HTTP calls, so `rate` is an *iteration* rate and the report also shows the
+# request rate it implies (PLAN-OUTLINE.md §11).
+workload:
+  type: http
+  journey:
+    - name: browse
+      method: GET
+      path: /feed
+
+    - name: read
+      method: GET
+      path: /posts/123
+
+    - name: like
+      method: POST
+      path: /posts/123/like
+
+    - name: create
+      method: POST
+      path: /posts
+      body: '{"title":"hello"}'
+      headers:
+        Content-Type: application/json
+
+run:
+  rate: 100 # iterations/s, i.e. 400 requests/s
+  duration: 2m
+  time_unit: 1s
+
+thresholds:
+  error_rate:
+    max: 0.01
+
+  latency:
+    p95:
+      max: 250ms
+    p99:
+      max: 1s
+
+# Windowed analysis is worth having here: a journey that is fine for a minute and
+# then stalls is exactly the failure an average hides.
+analysis:
+  window: 10s
+  require_all_windows_pass: true
