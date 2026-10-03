@@ -484,6 +484,89 @@ func TestValidateModeUnknown(t *testing.T) {
 	}
 }
 
+// TestValidateAnalysis covers the windowed-analysis settings, which apply to
+// every measurement in every mode.
+func TestValidateAnalysis(t *testing.T) {
+	build := func(mutate func(*Config)) *Config {
+		cfg := &Config{
+			Target: Target{BaseURL: "http://localhost:1"},
+			Run:    Run{Rate: 100, Duration: Duration{Duration: 10 * time.Second}},
+		}
+		cfg.ApplyDefaults()
+		mutate(cfg)
+		return cfg
+	}
+
+	// Off by default, and valid in both modes.
+	plain := build(func(*Config) {})
+	if plain.Analysis.Window.Duration != 0 {
+		t.Errorf("analysis.window defaults to %v, want 0 (off)", plain.Analysis.Window)
+	}
+	for _, mode := range []Mode{ModeFixed, ModeCapacity} {
+		if err := plain.ValidateMode(mode); err != nil {
+			t.Errorf("ValidateMode(%s) = %v, want nil", mode, err)
+		}
+	}
+
+	// A window alone is fine.
+	windowed := build(func(c *Config) { c.Analysis.Window = Duration{Duration: 10 * time.Second} })
+	if err := windowed.ValidateMode(ModeFixed); err != nil {
+		t.Errorf("ValidateMode(fixed) = %v, want nil", err)
+	}
+
+	// require_all_windows_pass needs a window to apply to.
+	noWindow := build(func(c *Config) { c.Analysis.RequireAllWindowsPass = true })
+	if err := noWindow.ValidateMode(ModeFixed); err == nil {
+		t.Error("ValidateMode = nil, want an error for require_all_windows_pass with no window")
+	}
+
+	negative := build(func(c *Config) { c.Analysis.Window = Duration{Duration: -time.Second} })
+	if err := negative.ValidateMode(ModeFixed); err == nil {
+		t.Error("ValidateMode = nil, want an error for a negative window")
+	}
+}
+
+// TestLoadAnalysisBlock checks the YAML surface decodes and reaches validation.
+func TestLoadAnalysisBlock(t *testing.T) {
+	path := writeConfig(t, `
+target:
+  base_url: http://localhost:1
+run:
+  rate: 100
+  duration: 10s
+analysis:
+  window: 10s
+  require_all_windows_pass: true
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Analysis.Window.Duration != 10*time.Second {
+		t.Errorf("window = %v, want 10s", cfg.Analysis.Window)
+	}
+	if !cfg.Analysis.RequireAllWindowsPass {
+		t.Error("require_all_windows_pass = false, want true")
+	}
+}
+
+// TestLoadRejectsUnsupportedAnalysisKeys keeps typos failing fast.
+func TestLoadRejectsUnsupportedAnalysisKeys(t *testing.T) {
+	path := writeConfig(t, `
+target:
+  base_url: http://localhost:1
+run:
+  rate: 100
+  duration: 10s
+analysis:
+  windows: 10s
+`)
+	if _, err := Load(path); err == nil {
+		t.Error("Load = nil, want an error for an unknown analysis key")
+	}
+}
+
 func TestValidationRateOverride(t *testing.T) {
 	tests := []struct {
 		in      string

@@ -155,6 +155,9 @@ func (c *Config) ValidateMode(mode Mode) error {
 	if err := c.validateTarget(); err != nil {
 		return err
 	}
+	if err := c.validateAnalysis(); err != nil {
+		return err
+	}
 	if c.LoadGenerator.MaxVUs < c.LoadGenerator.PreAllocatedVUs {
 		return fmt.Errorf("load_generator.max_vus (%d) must be >= pre_allocated_vus (%d)",
 			c.LoadGenerator.MaxVUs, c.LoadGenerator.PreAllocatedVUs)
@@ -191,6 +194,18 @@ func (c *Config) validateTarget() error {
 
 	if c.Workload.Type != "http" {
 		return fmt.Errorf("unsupported workload.type %q (only \"http\" is supported)", c.Workload.Type)
+	}
+	return nil
+}
+
+// validateAnalysis checks the windowed-analysis settings, which apply to every
+// measurement in every mode.
+func (c *Config) validateAnalysis() error {
+	if c.Analysis.Window.Duration < 0 {
+		return errors.New("analysis.window must not be negative")
+	}
+	if c.Analysis.RequireAllWindowsPass && c.Analysis.Window.Duration <= 0 {
+		return errors.New("analysis.require_all_windows_pass needs analysis.window to be set")
 	}
 	return nil
 }

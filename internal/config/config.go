@@ -74,6 +74,7 @@ type Config struct {
 	Search        Search        `yaml:"search"`
 	Thresholds    Thresholds    `yaml:"thresholds"`
 	Percentiles   []float64     `yaml:"percentiles"`
+	Analysis      Analysis      `yaml:"analysis"`
 	Validation    Validation    `yaml:"validation"`
 	LoadGenerator LoadGenerator `yaml:"load_generator"`
 
@@ -176,14 +177,26 @@ type Search struct {
 	MaxVUGrowth         int      `yaml:"max_vu_growth"`
 }
 
+// Analysis configures the windowed view of a measurement.
+//
+// An overall p99 can hide a collapse: a system that is fine for four minutes and
+// then falls over still averages out. Windowing slices each measurement so that
+// shows up (PLAN-OUTLINE.md §31–§32).
+type Analysis struct {
+	// Window buckets every measurement into slices of this width. It is opt-in
+	// because k6 must stream every sample to disk to support it.
+	Window Duration `yaml:"window"`
+	// RequireAllWindowsPass makes a measurement fail when any single window
+	// breaches a threshold, rather than only when the run as a whole does.
+	RequireAllWindowsPass bool `yaml:"require_all_windows_pass"`
+}
+
 // Validation configures the post-search validation run that confirms the
 // discovered capacity (PLAN-OUTLINE.md §13–§14).
 type Validation struct {
-	Rate                  string   `yaml:"rate"`
-	Duration              Duration `yaml:"duration"`
-	SafetyMargin          float64  `yaml:"safety_margin"`
-	Window                Duration `yaml:"window"`
-	RequireAllWindowsPass bool     `yaml:"require_all_windows_pass"`
+	Rate         string   `yaml:"rate"`
+	Duration     Duration `yaml:"duration"`
+	SafetyMargin float64  `yaml:"safety_margin"`
 }
 
 // Mode selects what the CLI does with a configuration.
