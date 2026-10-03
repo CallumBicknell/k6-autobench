@@ -67,26 +67,28 @@ func (c *Config) ApplyDefaults() {
 	if c.Workload.Type == "" {
 		c.Workload.Type = "http"
 	}
-	if len(c.Workload.Requests) == 0 {
+	if len(c.Workload.Requests) == 0 && len(c.Workload.Journey) == 0 {
 		c.Workload.Requests = []Request{{Name: "root", Method: "GET", Path: "/", Weight: 1}}
 	}
-	for i := range c.Workload.Requests {
-		r := &c.Workload.Requests[i]
-		if r.Method == "" {
-			r.Method = "GET"
-		}
-		r.Method = strings.ToUpper(r.Method)
-		if r.Path == "" {
-			r.Path = "/"
-		}
-		if !strings.HasPrefix(r.Path, "/") {
-			r.Path = "/" + r.Path
-		}
-		if r.Name == "" {
-			r.Name = r.Method + " " + r.Path
-		}
-		if r.Weight <= 0 {
-			r.Weight = 1
+	for _, set := range [][]Request{c.Workload.Requests, c.Workload.Journey} {
+		for i := range set {
+			r := &set[i]
+			if r.Method == "" {
+				r.Method = "GET"
+			}
+			r.Method = strings.ToUpper(r.Method)
+			if r.Path == "" {
+				r.Path = "/"
+			}
+			if !strings.HasPrefix(r.Path, "/") {
+				r.Path = "/" + r.Path
+			}
+			if r.Name == "" {
+				r.Name = r.Method + " " + r.Path
+			}
+			if r.Weight <= 0 {
+				r.Weight = 1
+			}
 		}
 	}
 
@@ -101,7 +103,7 @@ func (c *Config) ApplyDefaults() {
 	sort.Float64s(c.Percentiles)
 
 	if c.LoadGenerator.PreAllocatedVUs <= 0 {
-		c.LoadGenerator.PreAllocatedVUs = autoPreAllocatedVUs(c.Run.Rate, 0)
+		c.LoadGenerator.PreAllocatedVUs = c.autoVUsForRate(c.Run.Rate, 0)
 	}
 	if c.LoadGenerator.MaxVUs <= 0 {
 		c.LoadGenerator.MaxVUs = maxVUsFor(c.LoadGenerator.PreAllocatedVUs)
@@ -195,6 +197,27 @@ func (c *Config) validateTarget() error {
 	if c.Workload.Type != "http" {
 		return fmt.Errorf("unsupported workload.type %q (only \"http\" is supported)", c.Workload.Type)
 	}
+	return c.validateWorkload()
+}
+
+// validateWorkload checks the workload shape. Exactly one of the weighted pool
+// and the journey may be set: allowing both would make "what does one iteration
+// do?" ambiguous, and the whole point of the distinction is that the report can
+// state the iteration and request rates honestly.
+func (c *Config) validateWorkload() error {
+	if len(c.Workload.Requests) > 0 && len(c.Workload.Journey) > 0 {
+		return errors.New("workload.requests and workload.journey are mutually exclusive: " +
+			"a weighted pool picks one request per iteration, a journey performs every step")
+	}
+
+	seen := map[string]bool{}
+	for _, r := range c.Workload.Steps() {
+		if seen[r.Name] {
+			return fmt.Errorf("duplicate workload request name %q: names tag the metrics, "+
+				"so they must be unique", r.Name)
+		}
+		seen[r.Name] = true
+	}
 	return nil
 }
 
@@ -249,17 +272,17 @@ func (c *Config) validateSearch() error {
 // the load-generator pool sized for that rate. The capacity search uses it to
 // turn one config into one probe per rate.
 //
-// observedLatencyMs is the per-iteration latency seen by the previous probe; 0
-// means "unknown" and falls back to the default assumption. Anything the user
-// pinned explicitly in load_generator is left alone, so an explicit max_vus
-// still caps the pool (and surfaces as generator saturation).
-func (c *Config) ForRate(rate int, observedLatencyMs float64) *Config {
+// observedIterationLatencyMs is the per-iteration latency seen by the previous
+// probe; 0 means "unknown" and falls back to assuming ~100ms per HTTP call.
+// Anything the user pinned explicitly in load_generator is left alone, so an
+// explicit max_vus still caps the pool (and surfaces as generator saturation).
+func (c *Config) ForRate(rate int, observedIterationLatencyMs float64) *Config {
 	cp := *c
 	cp.Run.Rate = rate
 	cp.Run.TimeUnit = "1s"
 
 	if !c.preAllocatedExplicit {
-		cp.LoadGenerator.PreAllocatedVUs = autoPreAllocatedVUs(rate, observedLatencyMs)
+		cp.LoadGenerator.PreAllocatedVUs = c.autoVUsForRate(rate, observedIterationLatencyMs)
 	}
 	switch {
 	case !c.maxVUsExplicit:
@@ -296,9 +319,10 @@ func (c *Config) TargetRatePerSecond() float64 {
 
 // autoPreAllocatedVUs estimates a starting VU pool for a rate using Little's
 // law: concurrency = rate x latency. A zero latencyMs means "unknown" and
-// assumes defaultIterationMs, which reproduces the V0.1 rate/10 heuristic.
-// The capacity search passes the latency it actually observed, so the pool
-// tracks a slow system instead of saturating the generator spuriously.
+// assumes defaultIterationMs, which reproduces the V0.1 rate/10 heuristic for a
+// single-request iteration. The capacity search passes the latency it actually
+// observed, so the pool tracks a slow system instead of saturating the generator
+// spuriously.
 func autoPreAllocatedVUs(rate int, latencyMs float64) int {
 	if rate <= 0 {
 		return 10
@@ -311,6 +335,17 @@ func autoPreAllocatedVUs(rate int, latencyMs float64) int {
 		vus = 10
 	}
 	return vus
+}
+
+// autoVUsForRate sizes the pool for a rate, assuming defaultIterationMs per HTTP
+// call when nothing has been measured yet. A multi-step journey issues one call
+// per step, so it needs proportionally more concurrency for the same iteration
+// rate -- without this, a journey saturates the generator on its first probe.
+func (c *Config) autoVUsForRate(rate int, iterationLatencyMs float64) int {
+	if iterationLatencyMs <= 0 {
+		iterationLatencyMs = defaultIterationMs * float64(c.Workload.RequestsPerIteration())
+	}
+	return autoPreAllocatedVUs(rate, iterationLatencyMs)
 }
 
 // maxVUsFor derives a VU ceiling from a pre-allocated pool, leaving k6 room to

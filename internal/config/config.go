@@ -103,10 +103,41 @@ type Target struct {
 	BaseURL string `yaml:"base_url"`
 }
 
-// Workload describes the HTTP requests an iteration may issue.
+// Workload describes the HTTP work one iteration performs.
 type Workload struct {
-	Type     string    `yaml:"type"`
+	Type string `yaml:"type"`
+	// Requests is a weighted pool: each iteration performs exactly one of them,
+	// chosen at random by weight. One iteration is one HTTP call.
 	Requests []Request `yaml:"requests"`
+	// Journey is an ordered sequence: each iteration performs every step, in
+	// order. One iteration is one HTTP call per step, which is why the report
+	// distinguishes iteration rate from request rate (PLAN-OUTLINE.md §11).
+	//
+	// At most one of Requests and Journey may be set. weight is meaningless for
+	// a journey step and is ignored.
+	Journey []Request `yaml:"journey"`
+}
+
+// IsJourney reports whether an iteration walks an ordered journey rather than
+// drawing one request from a weighted pool.
+func (w Workload) IsJourney() bool { return len(w.Journey) > 0 }
+
+// Steps returns the requests one iteration performs, in order. For a weighted
+// pool that is the pool itself; each iteration still performs only one of them.
+func (w Workload) Steps() []Request {
+	if w.IsJourney() {
+		return w.Journey
+	}
+	return w.Requests
+}
+
+// RequestsPerIteration is how many HTTP calls one iteration issues: one for a
+// weighted pool, one per step for a journey.
+func (w Workload) RequestsPerIteration() int {
+	if w.IsJourney() {
+		return len(w.Journey)
+	}
+	return 1
 }
 
 // Request is one weighted HTTP call within the workload.
