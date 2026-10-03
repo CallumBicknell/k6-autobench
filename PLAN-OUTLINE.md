@@ -6,7 +6,9 @@
 > - **V0.2 — done.** `autobench capacity`: exponential bracket → binary search →
 >   validation, with per-probe VU sizing, warmup runs, confirmation runs and
 >   per-probe artefacts. (`internal/search`, `internal/bench`.)
-> - **V0.3 — not started.** HTML reporting, endpoint breakdown, latency graph.
+> - **V0.3 — done.** Endpoint breakdown, `--html` report (self-contained, inline
+>   SVG rate/latency chart), `report.html` in the results directory.
+>   (`internal/metrics`, `internal/report`.)
 >
 > Deviations worth knowing, and why:
 >
@@ -19,7 +21,10 @@
 >   default is to abort with advice rather than silently spawn thousands of VUs
 >   on a shared machine.
 > - `validation.window` / `require_all_windows_pass` (§14) are decoded but not yet
->   used; they belong with the V0.3 reporting work.
+>   used; they belong with time-windowed percentiles (§31), which are still to do.
+> - Endpoint breakdowns rely on k6 emitting a tagged submetric per request name,
+>   which it only does when a threshold selects it, so the workload script
+>   declares always-satisfied thresholds (§17 in `k6/runner.js`).
 
 ---
 
@@ -1934,6 +1939,9 @@ This is the core of your idea.
 ---
 
 ## V0.3 — validation + reporting
+
+**Implemented.** `autobench run --html report.html`, `autobench capacity
+--html report.html`, and `report.html` written by `capacity --out-dir`.
 
 Add:
 

@@ -69,3 +69,7 @@ validation:
 # load_generator:
 #   pre_allocated_vus: 100
 #   max_vus: 400
+
+# `autobench capacity examples/api-capacity.yaml --out-dir results/` writes
+# config.yaml, manifest.json, summary.json, report.html and one file per probe.
+# Add `--html report.html` for just the report.

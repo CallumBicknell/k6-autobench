@@ -7,9 +7,9 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.2** — a fixed-rate run (`autobench run`) and the adaptive capacity
-> search (`autobench capacity`): exponential bracket → binary search → validation.
-> HTML reporting is planned for V0.3. See `PLAN-OUTLINE.md`.
+> **Status: V0.3** — `autobench run` (fixed rate) and `autobench capacity`
+> (adaptive search) both report latency, per-endpoint breakdowns, JSON and a
+> self-contained HTML report with a rate/latency chart. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -60,6 +60,7 @@ test.
 | `--k6` | Path to the k6 binary |
 | `--script` | Override the embedded k6 workload script |
 | `--json` | Write the full result as JSON |
+| `--html` | Write a self-contained HTML report |
 | `--no-color` | Disable coloured output |
 
 `autobench capacity` additionally accepts:
@@ -79,7 +80,8 @@ test.
 | `--validation-duration` | Length of the confirming run (`0s` skips it) |
 | `--validation-rate` | `discovered` or an explicit rate |
 | `--safety-margin` | Fraction of capacity to validate at, e.g. `0.9` |
-| `--out-dir` | Write the config, manifest, per-probe results and a summary |
+| `--html` | Write a self-contained HTML report |
+| `--out-dir` | Write the config, manifest, per-probe results, summary and HTML report |
 
 ## The capacity search
 
@@ -165,6 +167,68 @@ using the latency the previous probe actually observed. The pool is monotone: it
 never shrinks below what the search has already needed, so a retry always gives
 k6 more VUs than the attempt that saturated. Anything you pin in
 `load_generator` is left alone.
+
+## Reporting
+
+### Endpoint breakdown
+
+Every configured request carries its `name` as a k6 tag, so the report breaks
+latency and errors down per endpoint, not just for the run as a whole:
+
+```
+  REQUEST                REQS   ERRORS       avg       p95       p99
+  feed                    384        0     0.7ms     1.0ms     1.2ms
+  post                    200        0     0.7ms     1.0ms     1.1ms
+  like                    127        0     0.7ms     0.9ms     1.1ms
+  create_post              89        0     0.8ms     1.0ms     1.3ms
+```
+
+Rows are ordered busiest-first, so the endpoint carrying the most load leads.
+This is what turns "the p99 is 200ms" into "the p99 is 200ms *because of
+`/feed`".
+
+k6 only includes a tagged submetric in its summary when a threshold selects it,
+so the workload script declares always-satisfied thresholds (`p(95)>=0`, with
+`abortOnFail` disabled) for each request name. They cannot change the outcome of
+a run; the controller still owns every pass/fail decision.
+
+### HTML report
+
+`--html report.html` writes a single self-contained file: inline CSS, inline SVG,
+and no JavaScript or external assets, so it renders identically offline and can
+be archived as a CI artefact.
+
+It contains the verdict, run facts, the per-endpoint table, and — for a capacity
+search — a rate-vs-latency chart with the p95 SLO line and the discovered
+capacity marked, plus the full probe trace:
+
+```
+  Rate vs latency
+     2s │                                    ●
+        │                              ●
+   500ms│                        ●
+        │                  ●
+   100ms│ ●──●──●──●──●
+        └──────────────────────────────────
+          100   200   400   600   800
+```
+
+### Result storage
+
+`capacity --out-dir results/` writes everything needed to reproduce and re-read a
+search:
+
+```text
+results/
+├── config.yaml      # the config as it was read
+├── manifest.json    # search parameters, every probe, the verdict
+├── summary.json     # compact, CI-friendly: capacity, rates, verdict
+├── report.html      # the HTML report
+└── probes/
+    ├── 001-exponential-100.json
+    ├── 002-exponential-200.json
+    └── ...
+```
 
 ## Configuration
 
