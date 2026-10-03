@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/callum/k6-autobench/internal/config"
+	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
 )
 
@@ -62,6 +63,7 @@ func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, 
 	p.traffic(r)
 	p.line("")
 	p.latency(r)
+	p.endpoints(r.Metrics)
 
 	p.separator()
 
@@ -137,6 +139,43 @@ func failureLine(f results.Failure) string {
 	default:
 		return fmt.Sprintf("%-14s %s  >  %s   (limit)", f.Metric, ms(f.Observed), duration(f.Limit))
 	}
+}
+
+// endpoints prints the per-request breakdown. It is the section that answers
+// "which endpoint is actually the problem?", so it is skipped when the summary
+// carries no per-name submetrics.
+func (p *printer) endpoints(m metrics.Metrics) {
+	if len(m.Endpoints) == 0 {
+		return
+	}
+	p.line("")
+	p.line("  " + p.paint(cBold, fmt.Sprintf("%-18s%9s%9s%10s%10s%10s",
+		"REQUEST", "REQS", "ERRORS", "avg", "p95", "p99")))
+	for _, e := range m.Endpoints {
+		errors := commafy(e.Failed)
+		if e.Failed > 0 {
+			errors = p.paint(cRed, errors)
+		}
+		p.line(fmt.Sprintf("  %-18s%9s%9s%10s%10s%10s",
+			truncate(e.Name, 18),
+			commafy(e.Requests),
+			errors,
+			ms(e.AvgMs),
+			endpointPercentile(e, 95),
+			endpointPercentile(e, 99),
+		))
+	}
+}
+
+// endpointPercentile renders one endpoint percentile, or "-" when the config
+// does not collect it.
+func endpointPercentile(e metrics.Endpoint, p float64) string {
+	for _, pc := range e.Percentiles {
+		if pc.P == p {
+			return ms(pc.Val)
+		}
+	}
+	return "-"
 }
 
 func workloadSummary(cfg *config.Config) string {

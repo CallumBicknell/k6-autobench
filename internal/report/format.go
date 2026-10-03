@@ -71,3 +71,17 @@ func pct(ratio float64) string {
 
 // formatP renders a percentile label, e.g. 99.9 -> "p99.9".
 func formatP(p float64) string { return "p" + strconv.FormatFloat(p, 'f', -1, 64) }
+
+// truncate shortens s to at most n runes, marking the cut with an ellipsis.
+// Endpoint names come from user config and can be arbitrarily long; the report
+// columns are fixed width.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:n])
+	}
+	return string(r[:n-1]) + "…"
+}
