@@ -22,8 +22,11 @@ import (
 
 // Spec is everything the controller hands to a single k6 invocation.
 type Spec struct {
-	BaseURL         string
-	Requests        []config.Request
+	BaseURL string
+	// Workload is the HTTP work one iteration performs: a weighted pool, or an
+	// ordered journey. It decides both what the script does and how many HTTP
+	// calls an iteration makes.
+	Workload        config.Workload
 	Rate            int
 	TimeUnit        string
 	Duration        time.Duration
@@ -221,8 +224,9 @@ func (r *Runner) script(tmpDir string) (string, error) {
 }
 
 func buildEnv(spec Spec, summaryPath string) ([]string, error) {
-	workload := make([]workloadRequest, 0, len(spec.Requests))
-	for _, req := range spec.Requests {
+	steps := spec.Workload.Steps()
+	workload := make([]workloadRequest, 0, len(steps))
+	for _, req := range steps {
 		workload = append(workload, workloadRequest{
 			Name:    req.Name,
 			Method:  req.Method,
@@ -245,6 +249,11 @@ func buildEnv(spec Spec, summaryPath string) ([]string, error) {
 		return nil, errors.New("rate must be greater than 0")
 	}
 
+	mode := "weighted"
+	if spec.Workload.IsJourney() {
+		mode = "journey"
+	}
+
 	env := os.Environ()
 	env = append(env,
 		"AUTOBENCH_BASE_URL="+spec.BaseURL,
@@ -254,6 +263,7 @@ func buildEnv(spec Spec, summaryPath string) ([]string, error) {
 		"AUTOBENCH_PRE_ALLOCATED_VUS="+strconv.Itoa(spec.PreAllocatedVUs),
 		"AUTOBENCH_MAX_VUS="+strconv.Itoa(spec.MaxVUs),
 		"AUTOBENCH_PERCENTILES="+string(percentilesJSON),
+		"AUTOBENCH_WORKLOAD_MODE="+mode,
 		"AUTOBENCH_WORKLOAD="+string(workloadJSON),
 		"AUTOBENCH_SUMMARY_PATH="+summaryPath,
 	)

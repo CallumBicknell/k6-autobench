@@ -22,6 +22,7 @@ const BASE_URL = (__ENV.AUTOBENCH_BASE_URL || '').replace(/\/+$/, '');
 const PRE_ALLOCATED_VUS = Number(__ENV.AUTOBENCH_PRE_ALLOCATED_VUS || '10');
 const MAX_VUS = Number(__ENV.AUTOBENCH_MAX_VUS || '100');
 const PERCENTILES = JSON.parse(__ENV.AUTOBENCH_PERCENTILES || '[50,75,90,95,99,99.9]');
+const WORKLOAD_MODE = __ENV.AUTOBENCH_WORKLOAD_MODE || 'weighted';
 const WORKLOAD = JSON.parse(__ENV.AUTOBENCH_WORKLOAD || '[]');
 const SUMMARY_PATH = __ENV.AUTOBENCH_SUMMARY_PATH || '';
 
@@ -84,25 +85,36 @@ function pickRequest() {
   return WORKLOAD[WORKLOAD.length - 1];
 }
 
-export default function () {
-  const req = pickRequest();
-  if (!req) {
-    return;
-  }
-
+function doRequest(req) {
   const method = (req.method || 'GET').toUpperCase();
   const params = { tags: { name: req.name || req.path } };
   if (req.headers) {
     params.headers = req.headers;
   }
 
-  let res;
   if (method === 'GET' || method === 'HEAD' || method === 'DELETE' || method === 'OPTIONS') {
-    res = http.request(method, BASE_URL + req.path, null, params);
-  } else {
-    res = http.request(method, BASE_URL + req.path, req.body || null, params);
+    return http.request(method, BASE_URL + req.path, null, params);
+  }
+  return http.request(method, BASE_URL + req.path, req.body || null, params);
+}
+
+// One iteration is either a single weighted request, or every step of a journey
+// in order. The controller reports the two rates separately because they differ
+// by a factor of the journey length (PLAN-OUTLINE.md section 11).
+export default function () {
+  if (WORKLOAD_MODE === 'journey') {
+    for (const req of WORKLOAD) {
+      const res = doRequest(req);
+      check(res, { 'status < 400': (r) => r.status < 400 });
+    }
+    return;
   }
 
+  const req = pickRequest();
+  if (!req) {
+    return;
+  }
+  const res = doRequest(req);
   check(res, { 'status < 400': (r) => r.status < 400 });
 }
 

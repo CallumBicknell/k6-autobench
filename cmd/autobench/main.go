@@ -90,10 +90,23 @@ type overrides struct {
 	maxProbes      int
 	maxVUGrowth    int
 
+	// Windowed analysis.
+	analysisWindow string
+	allWindowsPass bool
+
 	// Validation.
 	validationDur  string
 	validationRate string
 	safetyMargin   float64
+}
+
+// registerAnalysisFlags adds the windowed-analysis overrides, which both
+// commands accept because windowing applies to every measurement.
+func registerAnalysisFlags(fs *flag.FlagSet, ov *overrides) {
+	fs.StringVar(&ov.analysisWindow, "analysis-window", "",
+		"slice every measurement into windows of this width, e.g. 10s (overrides config)")
+	fs.BoolVar(&ov.allWindowsPass, "require-all-windows-pass", false,
+		"fail a measurement when any single window breaches a threshold (overrides config)")
 }
 
 func runCommand(args []string) int {
@@ -121,6 +134,7 @@ func runCommand(args []string) int {
 	fs.StringVar(&jsonOut, "json", "", "write the full result as JSON to this path")
 	fs.StringVar(&htmlOut, "html", "", "write a self-contained HTML report to this path")
 	fs.BoolVar(&noColor, "no-color", false, "disable coloured output")
+	registerAnalysisFlags(fs, &ov)
 	fs.Usage = func() { runUsage(fs) }
 
 	if code := parseFlags(fs, args, &ov.configPath); code != exitPass {
@@ -143,7 +157,7 @@ func runCommand(args []string) int {
 	r := &runner.Runner{K6Path: k6Path, ScriptPath: scriptPath}
 	spec := runner.Spec{
 		BaseURL:         cfg.Target.BaseURL,
-		Requests:        cfg.Workload.Requests,
+		Workload:        cfg.Workload,
 		Rate:            cfg.Run.Rate,
 		TimeUnit:        cfg.Run.TimeUnit,
 		Duration:        cfg.Run.Duration.Duration,
@@ -166,6 +180,7 @@ func runCommand(args []string) int {
 	ended := time.Now()
 
 	m := metrics.Extract(outcome.Summary, cfg.Percentiles)
+	m.RateOverScenario(cfg.Run.Duration.Duration)
 	verdict, failures, gen := results.Evaluate(cfg, m)
 	windowFailures := results.WindowFailures(cfg, outcome.Windows)
 	verdict = results.ApplyWindowPolicy(cfg, verdict, windowFailures)
@@ -286,6 +301,7 @@ func buildConfig(path string, mode config.Mode, set map[string]bool, ov override
 		{"probe-duration", ov.probeDuration, &cfg.Search.ProbeDuration},
 		{"warmup", ov.warmup, &cfg.Search.Warmup},
 		{"validation-duration", ov.validationDur, &cfg.Validation.Duration},
+		{"analysis-window", ov.analysisWindow, &cfg.Analysis.Window},
 	}
 	for _, d := range durations {
 		if !set[d.flag] {
@@ -296,6 +312,10 @@ func buildConfig(path string, mode config.Mode, set map[string]bool, ov override
 			return nil, exitError
 		}
 		d.dst.Duration = parsed
+	}
+
+	if set["require-all-windows-pass"] {
+		cfg.Analysis.RequireAllWindowsPass = ov.allWindowsPass
 	}
 
 	if set["start-rate"] {

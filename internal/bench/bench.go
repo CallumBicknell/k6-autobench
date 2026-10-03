@@ -113,7 +113,7 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 
 	spec := runner.Spec{
 		BaseURL:         m.Config.Target.BaseURL,
-		Requests:        m.Config.Workload.Requests,
+		Workload:        m.Config.Workload,
 		Rate:            rate,
 		TimeUnit:        "1s",
 		Duration:        duration,
@@ -131,7 +131,12 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 	ended := time.Now()
 
 	cfg := m.Config.ForRate(rate, m.observedLatencyMs)
+	// The per-probe copy carries the probe's own duration, so the rates are
+	// measured over the scenario rather than over k6's wall time.
+	cfg.Run.Duration = config.Duration{Duration: duration}
+
 	mm := metrics.Extract(outcome.Summary, cfg.Percentiles)
+	mm.RateOverScenario(duration)
 	verdict, failures, gen := results.Evaluate(cfg, mm)
 	windowFailures := results.WindowFailures(cfg, outcome.Windows)
 	verdict = results.ApplyWindowPolicy(cfg, verdict, windowFailures)

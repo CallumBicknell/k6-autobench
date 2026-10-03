@@ -15,9 +15,17 @@ func (m *Measurer) init() {
 }
 
 // observe records the latency the system just showed, so the next probe sizes
-// its VU pool from reality rather than from the 100ms guess. Little's law wants
-// the mean latency: concurrency = rate x mean latency.
+// its VU pool from reality rather than from the 100ms-per-call guess.
+//
+// Little's law wants the time one iteration occupies a VU. For a single-request
+// iteration that is the request latency; for a multi-step journey it is the
+// end-to-end iteration time, which is several times larger and would otherwise
+// leave the pool far too small.
 func (m *Measurer) observe(mm metrics.Metrics) {
+	if m.Config.Workload.IsJourney() && mm.HasIterationLatency && mm.IterationAvgMs > 0 {
+		m.observedLatencyMs = mm.IterationAvgMs
+		return
+	}
 	if mm.AvgMs > 0 {
 		m.observedLatencyMs = mm.AvgMs
 	}
