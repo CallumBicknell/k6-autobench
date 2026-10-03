@@ -41,11 +41,12 @@ func (p *printer) kv(label, value string) {
 	fmt.Fprintf(p.w, "  %-14s%s\n", label, value)
 }
 
-// Render writes the full fixed-rate run report.
-func Render(w io.Writer, cfg *config.Config, r *results.Result, color bool) {
+// Render writes the full fixed-rate run report. version is the CLI version
+// string, so the header cannot drift from the binary that produced it.
+func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, color bool) {
 	p := &printer{w: w, color: color}
 
-	p.header("AUTOBENCH v0.1", "fixed-rate run")
+	p.header("AUTOBENCH v"+version, "fixed-rate run")
 
 	p.line("")
 	p.kv("Target", r.Target)

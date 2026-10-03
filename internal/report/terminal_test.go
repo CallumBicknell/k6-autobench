@@ -57,7 +57,7 @@ func searchOutcome() *search.Outcome {
 func renderCapacity(t *testing.T, out *search.Outcome, color bool) string {
 	t.Helper()
 	var buf bytes.Buffer
-	RenderCapacity(&buf, testConfig(), out, 3*time.Minute, color)
+	RenderCapacity(&buf, testConfig(), out, "0.2.0", 3*time.Minute, color)
 	return buf.String()
 }
 
@@ -211,7 +211,7 @@ func testResult() *results.Result {
 func render(t *testing.T, r *results.Result, color bool) string {
 	t.Helper()
 	var buf bytes.Buffer
-	Render(&buf, testConfig(), r, color)
+	Render(&buf, testConfig(), r, "0.2.0", color)
 	return buf.String()
 }
 
@@ -232,7 +232,7 @@ func TestRenderReportsRunShapeAndVerdict(t *testing.T) {
 	out := render(t, testResult(), false)
 
 	for _, want := range []string{
-		"AUTOBENCH v0.1",
+		"AUTOBENCH v0.2.0",
 		"http://localhost:3000",
 		"demo (2 weighted requests)",
 		"100 iterations/1s",

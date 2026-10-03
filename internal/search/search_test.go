@@ -2,8 +2,10 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +236,11 @@ func TestGeneratorSaturationAborts(t *testing.T) {
 	// The saturated rate must not have been mistaken for a failing bracket edge.
 	if out.FailingRate != 0 {
 		t.Errorf("FailingRate = %d, want 0", out.FailingRate)
+	}
+	// The error must be actionable: the probe was discarded, so it should say
+	// how to get past the saturation.
+	if !strings.Contains(err.Error(), "max_vu_growth") {
+		t.Errorf("error %q does not mention search.max_vu_growth", err)
 	}
 }
 
@@ -520,5 +527,50 @@ func TestContextCancellation(t *testing.T) {
 	}
 	if len(out.Probes) != 0 {
 		t.Errorf("len(Probes) = %d, want 0", len(out.Probes))
+	}
+}
+
+// TestConfigJSONRendersDurationsAsStrings keeps the machine-readable report
+// readable: a raw nanosecond count is not something a human can check.
+func TestConfigJSONRendersDurationsAsStrings(t *testing.T) {
+	cfg := Config{
+		StartRate:           100,
+		IncreaseFactor:      2,
+		Resolution:          20,
+		ConfirmationRuns:    1,
+		FailureConfirmation: 1,
+		MaxProbes:           12,
+		ProbeDuration:       5 * time.Second,
+		ValidationDuration:  90 * time.Second,
+		SafetyMargin:        0.9,
+	}
+
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	got := string(b)
+
+	for _, want := range []string{
+		`"probe_duration":"5s"`,
+		`"validation_duration":"1m30s"`,
+		`"start_rate":100`,
+		`"safety_margin":0.9`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("JSON %s does not contain %s", got, want)
+		}
+	}
+	if strings.Contains(got, "5000000000") {
+		t.Errorf("JSON still exposes nanosecond durations: %s", got)
+	}
+
+	// An unset validation duration is omitted rather than rendered as "0s".
+	noValidation, err := json.Marshal(Config{ProbeDuration: time.Minute})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(noValidation), "validation_duration") {
+		t.Errorf("JSON %s should omit an unset validation duration", noValidation)
 	}
 }

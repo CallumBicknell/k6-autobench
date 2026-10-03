@@ -24,7 +24,7 @@ import (
 	"github.com/callum/k6-autobench/internal/runner"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 // Exit codes.
 const (
@@ -153,7 +153,7 @@ func runCommand(args []string) int {
 	}
 
 	color := !noColor && os.Getenv("NO_COLOR") == "" && isTerminal(os.Stdout)
-	report.Render(os.Stdout, cfg, res, color)
+	report.Render(os.Stdout, cfg, res, version, color)
 
 	if jsonOut != "" {
 		if err := writeJSON(jsonOut, res); err != nil {

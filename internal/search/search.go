@@ -13,6 +13,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -82,6 +83,43 @@ type Config struct {
 	ValidationRate int `json:"validation_rate,omitempty"`
 	// SafetyMargin scales the discovered capacity for the validation run.
 	SafetyMargin float64 `json:"safety_margin,omitempty"`
+}
+
+// MarshalJSON renders the durations as strings ("5s" rather than 5000000000) so
+// the machine-readable report stays readable.
+func (c Config) MarshalJSON() ([]byte, error) {
+	// The shadow type exists only to change two field types; keep it in step
+	// with Config above.
+	type shadow struct {
+		StartRate           int     `json:"start_rate"`
+		IncreaseFactor      float64 `json:"increase_factor"`
+		Resolution          int     `json:"resolution"`
+		ConfirmationRuns    int     `json:"confirmation_runs"`
+		FailureConfirmation int     `json:"failure_confirmation"`
+		MaxRate             int     `json:"max_rate,omitempty"`
+		MaxProbes           int     `json:"max_probes,omitempty"`
+		ProbeDuration       string  `json:"probe_duration"`
+		ValidationDuration  string  `json:"validation_duration,omitempty"`
+		ValidationRate      int     `json:"validation_rate,omitempty"`
+		SafetyMargin        float64 `json:"safety_margin,omitempty"`
+	}
+
+	s := shadow{
+		StartRate:           c.StartRate,
+		IncreaseFactor:      c.IncreaseFactor,
+		Resolution:          c.Resolution,
+		ConfirmationRuns:    c.ConfirmationRuns,
+		FailureConfirmation: c.FailureConfirmation,
+		MaxRate:             c.MaxRate,
+		MaxProbes:           c.MaxProbes,
+		ProbeDuration:       c.ProbeDuration.String(),
+		ValidationRate:      c.ValidationRate,
+		SafetyMargin:        c.SafetyMargin,
+	}
+	if c.ValidationDuration > 0 {
+		s.ValidationDuration = c.ValidationDuration.String()
+	}
+	return json.Marshal(s)
 }
 
 // Outcome is the complete result of a capacity search.

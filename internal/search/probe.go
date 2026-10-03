@@ -116,12 +116,15 @@ func (c *Controller) check() error {
 func generatorError(p Probe) error {
 	g := p.Result.Generator
 	if g == nil {
-		return fmt.Errorf("%w at %d/s", ErrGeneratorSaturated, p.Rate)
+		return fmt.Errorf("%w at %d/s; raise load_generator.max_vus", ErrGeneratorSaturated, p.Rate)
 	}
 	msg := fmt.Sprintf("at %d/s: requested %.0f/s, achieved %.0f/s",
 		p.Rate, g.TargetRate, g.AchievedRate)
 	if g.Reason != "" {
 		msg += " (" + g.Reason + ")"
 	}
-	return fmt.Errorf("%w %s; raise load_generator.max_vus", ErrGeneratorSaturated, msg)
+	// The probe is discarded rather than read as a capacity limit, so say what
+	// would let the search continue.
+	return fmt.Errorf("%w %s; raise load_generator.max_vus, or let autobench "+
+		"grow the pool itself with search.max_vu_growth", ErrGeneratorSaturated, msg)
 }

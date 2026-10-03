@@ -12,10 +12,10 @@ import (
 
 // RenderCapacity writes the report for a capacity search: every probe it took,
 // the bracket it converged on and the validation run that confirmed it.
-func RenderCapacity(w io.Writer, cfg *config.Config, out *search.Outcome, elapsed time.Duration, color bool) {
+func RenderCapacity(w io.Writer, cfg *config.Config, out *search.Outcome, version string, elapsed time.Duration, color bool) {
 	p := &printer{w: w, color: color}
 
-	p.header("AUTOBENCH v0.2", "capacity search")
+	p.header("AUTOBENCH v"+version, "capacity search")
 
 	p.line("")
 	p.kv("Target", cfg.Target.BaseURL)
