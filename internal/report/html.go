@@ -41,6 +41,9 @@ type htmlPage struct {
 	Probes    []htmlProbe
 	Endpoints []htmlEndpoint
 
+	// IterationLatency is the end-to-end journey time, shown only for a journey.
+	IterationLatency []htmlPercentile
+
 	// Windowed view: latency over time (PLAN-OUTLINE.md §31).
 	WindowChart template.HTML
 	Windows     []htmlWindow
@@ -147,7 +150,7 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 		Verdict:  string(r.Verdict),
 		Passed:   r.Verdict.OK(),
 		Facts: []htmlFact{
-			{Label: "Rate", Value: fmt.Sprintf("%s iterations/%s", commafy(int64(r.Rate)), r.TimeUnit)},
+			{Label: "Rate", Value: rateLine(r.Rate, r.TimeUnit, cfg.Workload.RequestsPerIteration())},
 			{Label: "Duration", Value: r.Duration.String()},
 			{Label: "VUs", Value: fmt.Sprintf("%s pre-allocated / %s max",
 				commafy(int64(r.VUs.PreAllocated)), commafy(int64(r.VUs.Max)))},
@@ -157,6 +160,10 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 		Endpoints: endpointRows(r.Metrics),
 		Failures:  r.Failures,
 		Generator: r.Generator,
+	}
+	if cfg.Workload.IsJourney() {
+		page.IterationLatency = latencyFactsOf(r.Metrics.HasIterationLatency,
+			r.Metrics.IterationAvgMs, r.Metrics.IterationMaxMs, r.Metrics.IterationPercentiles)
 	}
 	page.WindowChart, page.Windows, page.WindowNote = windowSection(r.Windows, cfg)
 	return renderHTML(w, page)
@@ -179,14 +186,20 @@ func trafficFacts(m metrics.Metrics) []htmlFact {
 }
 
 func latencyFacts(m metrics.Metrics) []htmlPercentile {
-	if !m.HasLatency {
+	return latencyFactsOf(m.HasLatency, m.AvgMs, m.MaxMs, m.Percentiles)
+}
+
+// latencyFactsOf renders a latency set as label/value pairs, or nil when there
+// is nothing to show.
+func latencyFactsOf(has bool, avg, max float64, percentiles []metrics.Percentile) []htmlPercentile {
+	if !has {
 		return nil
 	}
-	out := []htmlPercentile{{Label: "avg", Value: ms(m.AvgMs)}, {Label: "min", Value: ms(m.MinMs)}}
-	for _, p := range m.Percentiles {
+	out := []htmlPercentile{{Label: "avg", Value: ms(avg)}}
+	for _, p := range percentiles {
 		out = append(out, htmlPercentile{Label: formatP(p.P), Value: ms(p.Val)})
 	}
-	return append(out, htmlPercentile{Label: "max", Value: ms(m.MaxMs)})
+	return append(out, htmlPercentile{Label: "max", Value: ms(max)})
 }
 
 func percentileCell(m metrics.Metrics, p float64) string {

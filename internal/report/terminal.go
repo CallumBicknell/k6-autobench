@@ -52,7 +52,7 @@ func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, 
 	p.line("")
 	p.kv("Target", r.Target)
 	p.kv("Workload", workloadSummary(cfg))
-	p.kv("Rate", fmt.Sprintf("%s iterations/%s", commafy(int64(r.Rate)), r.TimeUnit))
+	p.kv("Rate", rateLine(r.Rate, r.TimeUnit, cfg.Workload.RequestsPerIteration()))
 	p.kv("Duration", r.Duration.String())
 	p.kv("VUs", fmt.Sprintf("%s pre-allocated / %s max",
 		commafy(int64(r.VUs.PreAllocated)), commafy(int64(r.VUs.Max))))
@@ -63,6 +63,7 @@ func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, 
 	p.traffic(r)
 	p.line("")
 	p.latency(r)
+	p.iterationLatency(r, cfg)
 	p.endpoints(r.Metrics)
 	p.windows(r.Windows, cfg)
 
@@ -108,6 +109,23 @@ func (p *printer) latency(r *results.Result) {
 		p.line(fmt.Sprintf("    %-10s%s", formatP(pc.P), ms(pc.Val)))
 	}
 	p.line(fmt.Sprintf("    %-10s%s", "max", ms(m.MaxMs)))
+}
+
+// iterationLatency prints the end-to-end iteration time. It is only shown for a
+// journey: for a single-request iteration it is just the request latency plus
+// overhead, which would be noise.
+func (p *printer) iterationLatency(r *results.Result, cfg *config.Config) {
+	m := r.Metrics
+	if !cfg.Workload.IsJourney() || !m.HasIterationLatency {
+		return
+	}
+	p.line("")
+	p.line(fmt.Sprintf("  %s %s", "Journey latency", p.paint(cDim, "(end to end, all steps)")))
+	p.line(fmt.Sprintf("    %-10s%s", "avg", ms(m.IterationAvgMs)))
+	for _, pc := range m.IterationPercentiles {
+		p.line(fmt.Sprintf("    %-10s%s", formatP(pc.P), ms(pc.Val)))
+	}
+	p.line(fmt.Sprintf("    %-10s%s", "max", ms(m.IterationMaxMs)))
 }
 
 func (p *printer) verdict(r *results.Result) {
@@ -179,15 +197,33 @@ func endpointPercentile(e metrics.Endpoint, p float64) string {
 	return "-"
 }
 
+// rateLine renders an iteration rate and, when an iteration is more than one
+// HTTP call, the request rate it implies. The two differ by a factor of the
+// journey length, which is exactly what PLAN-OUTLINE.md §11 warns about.
+func rateLine(rate int, timeUnit string, perIteration int) string {
+	out := fmt.Sprintf("%s iterations/%s", commafy(int64(rate)), timeUnit)
+	if perIteration > 1 {
+		out += fmt.Sprintf("  (= %s requests/%s)", commafy(int64(rate*perIteration)), timeUnit)
+	}
+	return out
+}
+
+// workloadSummary describes the workload shape.
 func workloadSummary(cfg *config.Config) string {
+	name := cfg.Name
+	if name == "" {
+		name = "unnamed"
+	}
+
+	if cfg.Workload.IsJourney() {
+		n := len(cfg.Workload.Journey)
+		return fmt.Sprintf("%s (%d-step journey)", name, n)
+	}
+
 	n := len(cfg.Workload.Requests)
 	noun := "request"
 	if n != 1 {
 		noun = "requests"
-	}
-	name := cfg.Name
-	if name == "" {
-		name = "unnamed"
 	}
 	return fmt.Sprintf("%s (%d weighted %s)", name, n, noun)
 }

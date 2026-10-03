@@ -33,7 +33,7 @@ func RenderCapacity(w io.Writer, cfg *config.Config, out *search.Outcome, versio
 	p.line("")
 
 	p.separator()
-	p.capacity(out)
+	p.capacity(out, cfg)
 	p.endpoints(decidingMetrics(out))
 	p.windows(decidingWindows(out), cfg)
 	p.line("")
@@ -104,12 +104,14 @@ func latencyCell(m metrics.Metrics, p float64) string {
 }
 
 // capacity renders the bracket the search converged on.
-func (p *printer) capacity(out *search.Outcome) {
+func (p *printer) capacity(out *search.Outcome, cfg *config.Config) {
+	perIteration := cfg.Workload.RequestsPerIteration()
+
 	if out.PassingRate > 0 {
-		p.kv("Sustained", commafy(int64(out.PassingRate))+" iterations/s")
+		p.kv("Sustained", rateLine(out.PassingRate, "s", perIteration))
 	}
 	if out.FailingRate > 0 {
-		p.kv("Breached", commafy(int64(out.FailingRate))+" iterations/s")
+		p.kv("Breached", rateLine(out.FailingRate, "s", perIteration))
 	}
 	if out.BracketFound {
 		p.kv("Resolution", fmt.Sprintf("%s/s (bracket width %s)",
@@ -121,7 +123,7 @@ func (p *printer) capacity(out *search.Outcome) {
 		if out.LowerBoundOnly {
 			label = "Capacity ≥"
 		}
-		p.kv(label, commafy(int64(out.Capacity))+" iterations/s")
+		p.kv(label, rateLine(out.Capacity, "s", perIteration))
 	}
 	if out.Validation != nil {
 		p.kv("Validated", fmt.Sprintf("%s iterations/s for %s (margin %g)",

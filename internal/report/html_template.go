@@ -98,6 +98,13 @@ const htmlBody = `<main>
 {{end}}</dl>
 {{end}}
 
+{{if .IterationLatency}}
+<h2>Journey latency <span class="note">end to end, all steps</span></h2>
+<dl>
+{{range .IterationLatency}}  <dt>{{.Label}}</dt><dd>{{.Value}}</dd>
+{{end}}</dl>
+{{end}}
+
 {{if .Endpoints}}
 <h2>Endpoints</h2>
 <table>
