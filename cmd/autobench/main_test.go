@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"os"
@@ -323,8 +324,62 @@ func TestBuildConfigCapacityRejectsBadSearchValues(t *testing.T) {
 	}
 }
 
-// TestParseFlagsCapacityFlags checks the capacity flag set parses flags that
-// follow the positional config path, mirroring the fixed-rate regression test.
+// TestWriteHTMLFileBuffersBeforeWriting: a render error must not leave a
+// truncated report behind for CI to archive.
+func TestWriteHTMLFileBuffersBeforeWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.html")
+	boom := errors.New("template failed")
+
+	err := writeHTMLFile(path, func(w io.Writer) error {
+		io.WriteString(w, "<html>partial")
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want %v", err, boom)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Error("writeHTMLFile left a partial file behind")
+	}
+}
+
+func TestWriteHTMLFileWritesContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.html")
+
+	if err := writeHTMLFile(path, func(w io.Writer) error {
+		_, err := io.WriteString(w, "<!DOCTYPE html><html></html>")
+		return err
+	}); err != nil {
+		t.Fatalf("writeHTMLFile: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "<!DOCTYPE html><html></html>" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+// TestParseFlagsHTMLFlag checks --html is registered on both commands and
+// reported as set, so buildConfig-style override logic can see it.
+func TestParseFlagsHTMLFlag(t *testing.T) {
+	for _, name := range []string{"run", "capacity"} {
+		t.Run(name, func(t *testing.T) {
+			var out string
+			fs := flag.NewFlagSet(name, flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			fs.StringVar(&out, "html", "", "")
+
+			configPath := ""
+			if code := parseFlags(fs, []string{"bench.yaml", "--html", "/tmp/r.html"}, &configPath); code != exitPass {
+				t.Fatalf("parseFlags = %d, want %d", code, exitPass)
+			}
+			if out != "/tmp/r.html" || configPath != "bench.yaml" {
+				t.Errorf("html = %q, configPath = %q", out, configPath)
+			}
+		})
+	}
+}
 func TestParseFlagsCapacityFlags(t *testing.T) {
 	var ov overrides
 	fs := flag.NewFlagSet("capacity", flag.ContinueOnError)

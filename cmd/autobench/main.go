@@ -6,11 +6,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -103,6 +105,7 @@ func runCommand(args []string) int {
 		k6Path     string
 		scriptPath string
 		jsonOut    string
+		htmlOut    string
 		noColor    bool
 	)
 	fs.StringVar(&ov.configPath, "config", "", "path to a YAML config file")
@@ -116,6 +119,7 @@ func runCommand(args []string) int {
 	fs.StringVar(&k6Path, "k6", "", "path to the k6 binary (default: $AUTOBENCH_K6 or \"k6\")")
 	fs.StringVar(&scriptPath, "script", "", "override the embedded k6 workload script")
 	fs.StringVar(&jsonOut, "json", "", "write the full result as JSON to this path")
+	fs.StringVar(&htmlOut, "html", "", "write a self-contained HTML report to this path")
 	fs.BoolVar(&noColor, "no-color", false, "disable coloured output")
 	fs.Usage = func() { runUsage(fs) }
 
@@ -185,6 +189,14 @@ func runCommand(args []string) int {
 
 	if jsonOut != "" {
 		if err := writeJSONFile(jsonOut, res); err != nil {
+			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
+			return exitError
+		}
+	}
+	if htmlOut != "" {
+		if err := writeHTMLFile(htmlOut, func(w io.Writer) error {
+			return report.RenderHTML(w, cfg, res, version)
+		}); err != nil {
 			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
 			return exitError
 		}
@@ -337,6 +349,19 @@ func writeJSONFile(path string, v any) error {
 		return fmt.Errorf("encode result: %w", err)
 	}
 	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeHTMLFile renders a report to path. It buffers first so a template error
+// cannot leave a truncated file behind.
+func writeHTMLFile(path string, render func(io.Writer) error) error {
+	var buf bytes.Buffer
+	if err := render(&buf); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

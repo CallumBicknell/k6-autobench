@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -42,6 +43,7 @@ func capacityCommand(args []string) int {
 		k6Path     string
 		scriptPath string
 		jsonOut    string
+		htmlOut    string
 		outDir     string
 		noColor    bool
 	)
@@ -66,7 +68,8 @@ func capacityCommand(args []string) int {
 	fs.StringVar(&k6Path, "k6", "", "path to the k6 binary (default: $AUTOBENCH_K6 or \"k6\")")
 	fs.StringVar(&scriptPath, "script", "", "override the embedded k6 workload script")
 	fs.StringVar(&jsonOut, "json", "", "write the search result as JSON to this path")
-	fs.StringVar(&outDir, "out-dir", "", "write the config, manifest and per-probe results to this directory")
+	fs.StringVar(&htmlOut, "html", "", "write a self-contained HTML report to this path")
+	fs.StringVar(&outDir, "out-dir", "", "write the config, manifest, per-probe results and reports to this directory")
 	fs.BoolVar(&noColor, "no-color", false, "disable coloured output")
 	fs.Usage = func() { capacityUsage(fs) }
 
@@ -80,11 +83,11 @@ func capacityCommand(args []string) int {
 	if cfg == nil {
 		return code
 	}
-	return runCapacity(cfg, ov, k6Path, scriptPath, jsonOut, outDir, noColor)
+	return runCapacity(cfg, ov, k6Path, scriptPath, jsonOut, htmlOut, outDir, noColor)
 }
 
 // runCapacity drives the search for an already-validated config.
-func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, outDir string, noColor bool) int {
+func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, htmlOut, outDir string, noColor bool) int {
 	validationRate, err := cfg.ValidationRateOverride()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
@@ -154,8 +157,16 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 			return exitError
 		}
 	}
+	if htmlOut != "" {
+		if err := writeHTMLFile(htmlOut, func(w io.Writer) error {
+			return report.RenderCapacityHTML(w, cfg, out, version, ended.Sub(started), ended)
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
+			return exitError
+		}
+	}
 	if outDir != "" {
-		if err := writeArtifacts(outDir, ov.configPath, rep); err != nil {
+		if err := writeArtifacts(outDir, ov.configPath, rep, cfg, out, ended.Sub(started)); err != nil {
 			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
 			return exitError
 		}
@@ -181,9 +192,9 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 }
 
 // writeArtifacts persists a search so it can be re-read and diffed later
-// (PLAN-OUTLINE.md §26): the source config, a manifest, one file per probe and
-// a compact summary.
-func writeArtifacts(dir, configPath string, rep *capacityReport) error {
+// (PLAN-OUTLINE.md §26): the source config, a manifest, one file per probe, a
+// compact summary and the HTML report.
+func writeArtifacts(dir, configPath string, rep *capacityReport, cfg *config.Config, out *search.Outcome, elapsed time.Duration) error {
 	probeDir := filepath.Join(dir, "probes")
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", probeDir, err)
@@ -214,7 +225,9 @@ func writeArtifacts(dir, configPath string, rep *capacityReport) error {
 	if err := writeJSONFile(filepath.Join(dir, "summary.json"), searchSummaryReport(rep)); err != nil {
 		return err
 	}
-	return nil
+	return writeHTMLFile(filepath.Join(dir, "report.html"), func(w io.Writer) error {
+		return report.RenderCapacityHTML(w, cfg, out, version, elapsed, rep.EndedAt)
+	})
 }
 
 // capacitySummary is the compact, CI-friendly form of a search.
