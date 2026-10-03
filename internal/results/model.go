@@ -33,6 +33,10 @@ type Failure struct {
 	Limit    float64 `json:"limit"`
 	Observed float64 `json:"observed"`
 	Unit     string  `json:"unit"` // "ms" or "ratio"
+	// Window is the time window the breach was seen in, when the failure came
+	// from windowed analysis rather than the run as a whole. -1 means the whole
+	// run, and is omitted from JSON.
+	Window int `json:"window,omitempty"`
 }
 
 // GeneratorStatus describes the state of the load generator relative to the
@@ -68,4 +72,9 @@ type Result struct {
 	Failures  []Failure                 `json:"failures,omitempty"`
 	Generator *GeneratorStatus          `json:"generator,omitempty"`
 	Raw       map[string]metrics.Metric `json:"raw,omitempty"`
+	// Windows holds per-window aggregates when windowed analysis was enabled.
+	Windows []metrics.Window `json:"windows,omitempty"`
+	// WindowFailures holds SLO breaches found in individual windows. They only
+	// affect the verdict when the validation requires every window to pass.
+	WindowFailures []Failure `json:"window_failures,omitempty"`
 }

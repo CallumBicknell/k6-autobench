@@ -26,35 +26,7 @@ type latencyCheck struct {
 // breaches.
 func Evaluate(cfg *config.Config, m metrics.Metrics) (Verdict, []Failure, *GeneratorStatus) {
 	gen := detectGenerator(cfg, m)
-
-	var failures []Failure
-
-	if t := cfg.Thresholds.ErrorRate; t != nil && m.ErrorRate > t.Max {
-		failures = append(failures, Failure{
-			Metric:   "error_rate",
-			Limit:    t.Max,
-			Observed: m.ErrorRate,
-			Unit:     "ratio",
-		})
-	}
-
-	var latencyFailures []Failure
-	for _, lc := range latencyChecks(cfg.Thresholds.Latency) {
-		val, ok := m.At(lc.p)
-		if !ok {
-			continue
-		}
-		limitMs := float64(lc.max) / float64(time.Millisecond)
-		if val > limitMs {
-			latencyFailures = append(latencyFailures, Failure{
-				Metric:   "latency." + formatP(lc.p),
-				Limit:    limitMs,
-				Observed: val,
-				Unit:     "ms",
-			})
-		}
-	}
-	failures = append(failures, latencyFailures...)
+	failures := EvaluateThresholds(cfg, m)
 
 	var verdict Verdict
 	switch {
@@ -68,6 +40,56 @@ func Evaluate(cfg *config.Config, m metrics.Metrics) (Verdict, []Failure, *Gener
 		verdict = VerdictFailLatency
 	}
 	return verdict, failures, gen
+}
+
+// EvaluateThresholds checks only the configured SLOs, ignoring the load
+// generator.
+//
+// It is separate from Evaluate because a single time window cannot be judged on
+// generator saturation: a window's achieved rate dips simply because requests
+// were still in flight when it closed, which says nothing about the load
+// generator (PLAN-OUTLINE.md §32 keeps the two concerns apart).
+func EvaluateThresholds(cfg *config.Config, m metrics.Metrics) []Failure {
+	var failures []Failure
+
+	if t := cfg.Thresholds.ErrorRate; t != nil && m.ErrorRate > t.Max {
+		failures = append(failures, Failure{
+			Metric:   "error_rate",
+			Limit:    t.Max,
+			Observed: m.ErrorRate,
+			Unit:     "ratio",
+		})
+	}
+
+	for _, lc := range latencyChecks(cfg.Thresholds.Latency) {
+		val, ok := m.At(lc.p)
+		if !ok {
+			continue
+		}
+		limitMs := float64(lc.max) / float64(time.Millisecond)
+		if val > limitMs {
+			failures = append(failures, Failure{
+				Metric:   "latency." + formatP(lc.p),
+				Limit:    limitMs,
+				Observed: val,
+				Unit:     "ms",
+			})
+		}
+	}
+	return failures
+}
+
+// VerdictForFailures classifies a set of threshold breaches the same way
+// Evaluate does: an error-rate breach outranks a latency breach.
+func VerdictForFailures(failures []Failure) Verdict {
+	switch {
+	case len(failures) == 0:
+		return VerdictPass
+	case hasUnit(failures, "ratio"):
+		return VerdictFailErrors
+	default:
+		return VerdictFailLatency
+	}
 }
 
 func detectGenerator(cfg *config.Config, m metrics.Metrics) *GeneratorStatus {
