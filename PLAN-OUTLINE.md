@@ -9,6 +9,9 @@
 > - **V0.3 — done.** Endpoint breakdown, `--html` report (self-contained, inline
 >   SVG rate/latency chart), `report.html` in the results directory.
 >   (`internal/metrics`, `internal/report`.)
+> - **V0.4 — done.** Windowed analysis: per-window percentiles from k6's sample
+>   stream, `analysis.require_all_windows_pass`, latency-over-time charts.
+>   (`internal/metrics`, `internal/results`, `internal/report`.)
 >
 > Deviations worth knowing, and why:
 >
@@ -22,6 +25,10 @@
 >   on a shared machine.
 > - `validation.window` / `require_all_windows_pass` (§14) are decoded but not yet
 >   used; they belong with time-windowed percentiles (§31), which are still to do.
+> - `validation.window` and `validation.require_all_windows_pass` (§32) moved to
+>   an `analysis:` block. They apply to *every* measurement, not just the
+>   validation run, and having one window size under two names would have been
+>   worse than the rename.
 > - Endpoint breakdowns rely on k6 emitting a tagged submetric per request name,
 >   which it only does when a threshold selects it, so the workload script
 >   declares always-satisfied thresholds (§17 in `k6/runner.js`).
@@ -1699,6 +1706,9 @@ k6 already provides the core HTTP request, failure, and duration metrics, and ca
 
 # 31. One thing I'd add that the screenshot doesn't show
 
+**Implemented.** `analysis.window: 10s`, reported as a latency-over-time table and
+chart in both the terminal and HTML reports.
+
 **Time-windowed percentiles.**
 
 Overall:
@@ -1755,6 +1765,9 @@ This is how you detect systems that **look fine initially but collapse under sus
 ---
 
 # 32. The validation should therefore be stricter
+
+**Implemented**, as `analysis.require_all_windows_pass` (see the note at the top
+of this document for why it is not under `validation:`).
 
 Instead of simply:
 

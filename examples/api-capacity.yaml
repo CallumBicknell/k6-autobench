@@ -55,6 +55,15 @@ thresholds:
     p99:
       max: 1s
 
+# Windowed analysis: slices every measurement into windows so a collapse partway
+# through a run cannot hide behind the run's own average. Off by default, because
+# k6 must stream every sample to disk to support it (roughly rate x duration
+# lines). With require_all_windows_pass, any single window breaching a threshold
+# fails the measurement.
+# analysis:
+#   window: 10s
+#   require_all_windows_pass: true
+
 # The validation run re-tests the discovered capacity for long enough to trust
 # it. Omit the block (or set duration: 0s) to skip it, in which case the
 # search's own finding is the verdict.

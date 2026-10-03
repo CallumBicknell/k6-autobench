@@ -26,7 +26,7 @@ import (
 	"github.com/callum/k6-autobench/internal/runner"
 )
 
-const version = "0.2.0"
+const version = "0.4.0"
 
 // Exit codes.
 const (
@@ -150,6 +150,7 @@ func runCommand(args []string) int {
 		PreAllocatedVUs: cfg.LoadGenerator.PreAllocatedVUs,
 		MaxVUs:          cfg.LoadGenerator.MaxVUs,
 		Percentiles:     cfg.Percentiles,
+		Window:          cfg.Analysis.Window.Duration,
 	}
 
 	started := time.Now()
@@ -166,22 +167,26 @@ func runCommand(args []string) int {
 
 	m := metrics.Extract(outcome.Summary, cfg.Percentiles)
 	verdict, failures, gen := results.Evaluate(cfg, m)
+	windowFailures := results.WindowFailures(cfg, outcome.Windows)
+	verdict = results.ApplyWindowPolicy(cfg, verdict, windowFailures)
 
 	res := &results.Result{
-		Name:      cfg.Name,
-		Target:    cfg.Target.BaseURL,
-		Rate:      cfg.Run.Rate,
-		TimeUnit:  cfg.Run.TimeUnit,
-		Duration:  cfg.Run.Duration,
-		VUs:       results.VUPlan{PreAllocated: cfg.LoadGenerator.PreAllocatedVUs, Max: cfg.LoadGenerator.MaxVUs},
-		StartedAt: started,
-		EndedAt:   ended,
-		ElapsedMs: float64(ended.Sub(started)) / float64(time.Millisecond),
-		Metrics:   m,
-		Verdict:   verdict,
-		Failures:  failures,
-		Generator: gen,
-		Raw:       outcome.Summary.Metrics,
+		Name:           cfg.Name,
+		Target:         cfg.Target.BaseURL,
+		Rate:           cfg.Run.Rate,
+		TimeUnit:       cfg.Run.TimeUnit,
+		Duration:       cfg.Run.Duration,
+		VUs:            results.VUPlan{PreAllocated: cfg.LoadGenerator.PreAllocatedVUs, Max: cfg.LoadGenerator.MaxVUs},
+		StartedAt:      started,
+		EndedAt:        ended,
+		ElapsedMs:      float64(ended.Sub(started)) / float64(time.Millisecond),
+		Metrics:        m,
+		Verdict:        verdict,
+		Failures:       failures,
+		Generator:      gen,
+		Raw:            outcome.Summary.Metrics,
+		Windows:        outcome.Windows,
+		WindowFailures: windowFailures,
 	}
 
 	color := !noColor && os.Getenv("NO_COLOR") == "" && isTerminal(os.Stdout)

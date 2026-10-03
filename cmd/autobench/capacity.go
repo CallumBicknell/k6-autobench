@@ -102,6 +102,7 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 		Runner:      &runner.Runner{K6Path: k6Path, ScriptPath: scriptPath},
 		Warmup:      cfg.Search.Warmup.Duration,
 		MaxVUGrowth: cfg.Search.MaxVUGrowth,
+		Window:      cfg.Analysis.Window.Duration,
 		OnProgress:  func(msg string) { fmt.Fprintln(os.Stderr, "autobench: "+msg) },
 	}
 

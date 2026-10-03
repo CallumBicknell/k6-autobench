@@ -7,9 +7,10 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.3** — `autobench run` (fixed rate) and `autobench capacity`
-> (adaptive search) both report latency, per-endpoint breakdowns, JSON and a
-> self-contained HTML report with a rate/latency chart. See `PLAN-OUTLINE.md`.
+> **Status: V0.4** — `autobench run` (fixed rate) and `autobench capacity`
+> (adaptive search) report latency, per-endpoint breakdowns, JSON and a
+> self-contained HTML report with rate/latency charts. Windowed analysis exposes
+> collapses that an average hides. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -229,6 +230,52 @@ results/
     ├── 002-exponential-200.json
     └── ...
 ```
+
+## Latency over time
+
+An overall p99 can hide a collapse. A system that is fine for four minutes and
+then falls over still averages out:
+
+```
+  Latency
+    p95       1.3ms        <- the run as a whole looks healthy
+    max     301.5ms
+
+  LATENCY OVER TIME (5s windows)
+
+  WINDOW          REQUESTS   ERRORS        p95        p99        max
+  0s-5s              1,003        0      1.4ms          -     10.4ms
+  5s-10s             1,000        0    300.9ms          -    301.5ms ← worst
+  10s-15s            1,000        0      1.0ms          -      2.8ms
+  15s-20s              997        0      1.0ms          -      9.9ms
+
+  Worst window  5s-10s: p95 300.9ms (249.5x the median 1.2ms)
+
+  RESULT: FAIL_LATENCY
+```
+
+That run is a **PASS** without windowing. Enable it with:
+
+```yaml
+analysis:
+  window: 5s
+  require_all_windows_pass: true
+```
+
+`window` slices every measurement — fixed runs, every search probe and the
+validation run — into buckets of that width. `require_all_windows_pass` makes a
+measurement fail when *any* window breaches a threshold, rather than only when
+the run as a whole does. Without it the window table is still reported, so the
+spike is visible even when the verdict is lenient.
+
+Windowed analysis is off by default because it costs a sample file proportional
+to `rate × duration` — k6 has to stream every sample to disk for it. Windows
+with no traffic are reported as empty rather than skipped, and if a window holds
+more samples than are retained its percentiles come from a prefix and the report
+says so.
+
+Both the terminal and HTML reports gain a latency-over-time chart with the same
+SLO line as the rate/latency chart.
 
 ## Configuration
 
