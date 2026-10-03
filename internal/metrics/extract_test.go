@@ -3,6 +3,7 @@ package metrics
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // summaryJSON mirrors the shape of a real k6 summary payload, including k6's
@@ -231,5 +232,82 @@ func TestExtractEndpointsSortedByNameOnTies(t *testing.T) {
 
 	if len(m.Endpoints) != 2 || m.Endpoints[0].Name != "alpha" || m.Endpoints[1].Name != "zeta" {
 		t.Errorf("Endpoints = %+v, want alpha then zeta", m.Endpoints)
+	}
+}
+
+// TestExtractIterationLatency: for a multi-step journey the end-to-end iteration
+// time is what a user waits for, where http_req_duration covers one step of it.
+func TestExtractIterationLatency(t *testing.T) {
+	raw := `{"metrics": {
+		"iteration_duration": {
+			"type": "trend",
+			"values": {"avg": 45.2, "min": 12, "max": 220.5, "p(50)": 40, "p(95)": 120, "p(99)": 190}
+		}
+	}}`
+	m := Extract(mustSummary(t, raw), []float64{50, 95, 99})
+
+	if !m.HasIterationLatency {
+		t.Fatal("HasIterationLatency = false")
+	}
+	if m.IterationAvgMs != 45.2 || m.IterationMaxMs != 220.5 {
+		t.Errorf("avg/max = %v/%v, want 45.2/220.5", m.IterationAvgMs, m.IterationMaxMs)
+	}
+	if len(m.IterationPercentiles) != 3 {
+		t.Fatalf("percentiles = %+v, want 3", m.IterationPercentiles)
+	}
+	if m.IterationPercentiles[1].P != 95 || m.IterationPercentiles[1].Val != 120 {
+		t.Errorf("p95 = %+v, want 120", m.IterationPercentiles[1])
+	}
+}
+
+func TestExtractIterationLatencyAbsent(t *testing.T) {
+	m := Extract(mustSummary(t, `{}`), []float64{95})
+	if m.HasIterationLatency {
+		t.Error("HasIterationLatency = true for a summary with no iteration_duration")
+	}
+	if len(m.IterationPercentiles) != 0 {
+		t.Errorf("percentiles = %+v, want none", m.IterationPercentiles)
+	}
+}
+
+// TestRateOverScenario guards a real false positive: k6's own rate divides by
+// the whole wall time including its startup, so a short run that hit its target
+// exactly reports a few percent low and looks like a saturated generator.
+func TestRateOverScenario(t *testing.T) {
+	raw := `{"metrics": {
+		"iterations": {"type": "counter", "values": {"count": 600, "rate": 98.1}},
+		"http_reqs":  {"type": "counter", "values": {"count": 2400, "rate": 392.4}}
+	}}`
+
+	m := Extract(mustSummary(t, raw), nil)
+	// Before: k6's rate, diluted by its own 116ms of startup and teardown.
+	if m.IterationRate != 98.1 {
+		t.Fatalf("k6 rate = %v, want 98.1", m.IterationRate)
+	}
+
+	m.RateOverScenario(6 * time.Second)
+	if m.IterationRate != 100 {
+		t.Errorf("iteration rate = %v, want 100 over the declared 6s", m.IterationRate)
+	}
+	if m.RequestRate != 400 {
+		t.Errorf("request rate = %v, want 400", m.RequestRate)
+	}
+	if m.DeclaredDurationMs != 6000 {
+		t.Errorf("DeclaredDurationMs = %v, want 6000", m.DeclaredDurationMs)
+	}
+}
+
+// TestRateOverScenarioIgnoresBadDuration: without a duration there is nothing to
+// divide by, so k6's own rates stand.
+func TestRateOverScenarioIgnoresBadDuration(t *testing.T) {
+	raw := `{"metrics": {"iterations": {"type": "counter", "values": {"count": 100, "rate": 50}}}}`
+	m := Extract(mustSummary(t, raw), nil)
+
+	m.RateOverScenario(0)
+	if m.IterationRate != 50 {
+		t.Errorf("iteration rate = %v, want k6's 50 left alone", m.IterationRate)
+	}
+	if m.DeclaredDurationMs != 0 {
+		t.Errorf("DeclaredDurationMs = %v, want 0", m.DeclaredDurationMs)
 	}
 }

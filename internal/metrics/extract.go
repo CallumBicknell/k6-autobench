@@ -3,6 +3,7 @@ package metrics
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 // Percentile is a single latency percentile reading, in milliseconds.
@@ -46,9 +47,20 @@ type Metrics struct {
 	VUs               int64        `json:"vus"`
 	MaxVUs            int64        `json:"max_vus"`
 	TestDurationMs    float64      `json:"test_duration_ms"`
+	// DeclaredDurationMs is the scenario's configured duration, set when the
+	// rates were recomputed over it rather than over k6's wall time.
+	DeclaredDurationMs float64 `json:"declared_duration_ms,omitempty"`
 	// Endpoints is empty when the summary carries no per-name submetrics (for
 	// example a summary produced by a workload script that does not tag names).
 	Endpoints []Endpoint `json:"endpoints,omitempty"`
+
+	// Iteration latency is the end-to-end time for one iteration. For a
+	// multi-step journey that is what a user actually waits for, where
+	// http_req_duration only covers one step of it.
+	HasIterationLatency  bool         `json:"has_iteration_latency"`
+	IterationAvgMs       float64      `json:"iteration_avg_ms"`
+	IterationMaxMs       float64      `json:"iteration_max_ms"`
+	IterationPercentiles []Percentile `json:"iteration_percentiles_ms,omitempty"`
 }
 
 // At returns the collected value for percentile p, if present.
@@ -59,6 +71,27 @@ func (m Metrics) At(p float64) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// RateOverScenario recomputes the iteration and request rates over the
+// scenario's declared duration.
+//
+// k6's own rate divides the count by the whole wall time, including its own
+// startup and teardown, during which it generates no load. On a short run that
+// overhead is a visible fraction of the total: a 5s run at 100 iterations/s
+// reports 98/s, which reads as a saturated generator when the scenario in fact
+// hit its target exactly. Dividing by the declared duration answers the question
+// that matters -- did the scenario deliver what it was asked for?
+//
+// A non-positive duration leaves k6's own rates alone.
+func (m *Metrics) RateOverScenario(d time.Duration) {
+	secs := d.Seconds()
+	if secs <= 0 {
+		return
+	}
+	m.DeclaredDurationMs = secs * 1000
+	m.IterationRate = float64(m.Iterations) / secs
+	m.RequestRate = float64(m.Requests) / secs
 }
 
 // Extract pulls the metrics autobench reports on out of a raw k6 summary.
@@ -100,8 +133,26 @@ func Extract(s *Summary, percentiles []float64) Metrics {
 	}
 	m.TestDurationMs = s.State.TestRunDurationMs
 	m.Endpoints = extractEndpoints(s, percentiles)
+	m.HasIterationLatency, m.IterationAvgMs, m.IterationMaxMs, m.IterationPercentiles =
+		extractIterationLatency(s, percentiles)
 
 	return m
+}
+
+// extractIterationLatency pulls the end-to-end iteration timing out of the
+// summary. k6 records it in milliseconds like http_req_duration.
+func extractIterationLatency(s *Summary, percentiles []float64) (bool, float64, float64, []Percentile) {
+	v, ok := s.Trend("iteration_duration")
+	if !ok {
+		return false, 0, 0, nil
+	}
+	var out []Percentile
+	for _, p := range percentiles {
+		if val, ok := v[PercentileKey(p)]; ok {
+			out = append(out, Percentile{P: p, Val: val})
+		}
+	}
+	return true, v["avg"], v["max"], out
 }
 
 // Submetric name prefixes. k6 renders a tagged submetric as "metric{tag:value}",
