@@ -35,6 +35,7 @@ func RenderCapacity(w io.Writer, cfg *config.Config, out *search.Outcome, versio
 	p.separator()
 	p.capacity(out)
 	p.endpoints(decidingMetrics(out))
+	p.windows(decidingWindows(out), cfg)
 	p.line("")
 
 	p.separator()

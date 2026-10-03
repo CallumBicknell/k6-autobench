@@ -41,6 +41,11 @@ type htmlPage struct {
 	Probes    []htmlProbe
 	Endpoints []htmlEndpoint
 
+	// Windowed view: latency over time (PLAN-OUTLINE.md §31).
+	WindowChart template.HTML
+	Windows     []htmlWindow
+	WindowNote  string
+
 	Failures  []results.Failure
 	Generator *results.GeneratorStatus
 	Notes     []string
@@ -80,6 +85,55 @@ type htmlEndpoint struct {
 	Max      string
 }
 
+// htmlWindow is one row of the latency-over-time table.
+type htmlWindow struct {
+	Label    string
+	Requests string
+	Errors   string
+	P95      string
+	P99      string
+	Max      string
+	Worst    bool
+	Sampled  bool
+}
+
+// windowSection renders the windowed view for a report: the chart, the table and
+// the worst-window callout.
+func windowSection(ws []metrics.Window, cfg *config.Config) (template.HTML, []htmlWindow, string) {
+	if len(ws) == 0 {
+		return "", nil, ""
+	}
+
+	var rows []htmlWindow
+	worst := worstWindow(ws)
+	for _, w := range ws {
+		errors := commafy(w.Failed)
+		rows = append(rows, htmlWindow{
+			Label:    windowLabel(w),
+			Requests: commafy(w.Requests),
+			Errors:   errors,
+			P95:      windowCell(w, 95),
+			P99:      windowCell(w, 99),
+			Max:      latencyOrDash(w),
+			Worst:    w.Index == worst,
+			Sampled:  w.Sampled,
+		})
+	}
+
+	p, ok := featuredPercentile(cfg.Percentiles)
+	if !ok {
+		return "", rows, worstWindowSummary(ws, worst)
+	}
+	chart := windowChart{Windows: ws, P: p, Size: cfg.Analysis.Window.Duration}
+	if t := cfg.Thresholds.Latency.P95; t != nil && p == 95 {
+		chart.LimitMs = float64(t.Max.Duration) / float64(time.Millisecond)
+	}
+
+	var b strings.Builder
+	renderWindowChart(&b, chart)
+	return template.HTML(b.String()), rows, worstWindowSummary(ws, worst) //nolint:gosec // built by us; dynamic text is escaped inside
+}
+
 // RenderHTML writes a self-contained HTML report for a fixed-rate run.
 func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version string) error {
 	page := htmlPage{
@@ -104,6 +158,7 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 		Failures:  r.Failures,
 		Generator: r.Generator,
 	}
+	page.WindowChart, page.Windows, page.WindowNote = windowSection(r.Windows, cfg)
 	return renderHTML(w, page)
 }
 
@@ -211,6 +266,7 @@ func RenderCapacityHTML(w io.Writer, cfg *config.Config, out *search.Outcome, ve
 	}
 
 	page.Chart = template.HTML(renderChart(out, cfg)) //nolint:gosec // built by us; dynamic text is escaped inside
+	page.WindowChart, page.Windows, page.WindowNote = windowSection(decidingWindows(out), cfg)
 	return renderHTML(w, page)
 }
 
@@ -256,6 +312,20 @@ func decidingMetrics(out *search.Outcome) metrics.Metrics {
 		}
 	}
 	return metrics.Metrics{}
+}
+
+// decidingWindows is decidingMetrics for the windowed view: the validation run's
+// windows when there is one, otherwise the passing probe's.
+func decidingWindows(out *search.Outcome) []metrics.Window {
+	if out.Validation != nil {
+		return out.Validation.Result.Windows
+	}
+	for i := len(out.Probes) - 1; i >= 0; i-- {
+		if out.Probes[i].Pass {
+			return out.Probes[i].Result.Windows
+		}
+	}
+	return nil
 }
 
 func probeRows(probes []search.Probe) []htmlProbe {

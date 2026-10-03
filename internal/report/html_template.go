@@ -36,6 +36,7 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--muted);font-size:.78rem;letter-spacing:.04em;text-transform:uppercase;font-weight:600}
 td.num,th.num{text-align:right}
+tr.worst td{background:color-mix(in srgb,var(--warn) 12%,transparent)}
 .pass{color:var(--ok)}
 .fail{color:var(--bad)}
 .note{color:var(--muted);font-size:.85rem}
@@ -103,6 +104,18 @@ const htmlBody = `<main>
 <thead><tr><th>Request</th><th class="num">Requests</th><th class="num">Rate/s</th><th class="num">Errors</th><th class="num">avg</th><th class="num">p95</th><th class="num">p99</th><th class="num">max</th></tr></thead>
 <tbody>
 {{range .Endpoints}}  <tr><td>{{.Name}}</td><td class="num">{{.Requests}}</td><td class="num">{{.Rate}}</td><td class="num">{{.Errors}}</td><td class="num">{{.Avg}}</td><td class="num">{{.P95}}</td><td class="num">{{.P99}}</td><td class="num">{{.Max}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}
+
+{{if .Windows}}
+<h2>Latency over time</h2>
+{{if .WindowNote}}<p class="note">{{.WindowNote}}</p>{{end}}
+{{.WindowChart}}
+<table>
+<thead><tr><th>Window</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">p95</th><th class="num">p99</th><th class="num">max</th></tr></thead>
+<tbody>
+{{range .Windows}}  <tr{{if .Worst}} class="worst"{{end}}><td>{{.Label}}{{if .Worst}} <span class="note">worst</span>{{end}}</td><td class="num">{{.Requests}}</td><td class="num">{{.Errors}}</td><td class="num">{{.P95}}</td><td class="num">{{.P99}}</td><td class="num">{{.Max}}</td></tr>
 {{end}}</tbody>
 </table>
 {{end}}
