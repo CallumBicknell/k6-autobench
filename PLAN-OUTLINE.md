@@ -1,4 +1,28 @@
-Yes — and I’d build it as **an adaptive load-testing orchestrator around k6**, rather than trying to make k6 itself responsible for the search algorithm.
+> **Implementation status.** This document is the original design outline, kept
+> as the reference for what to build. What actually exists:
+>
+> - **V0.1 — done.** `autobench run`: fixed-rate k6 runner, SLO evaluation,
+>   terminal report, JSON output, CI exit codes. (`internal/{config,metrics,results,report,runner}`, `cmd/autobench`.)
+> - **V0.2 — done.** `autobench capacity`: exponential bracket → binary search →
+>   validation, with per-probe VU sizing, warmup runs, confirmation runs and
+>   per-probe artefacts. (`internal/search`, `internal/bench`.)
+> - **V0.3 — not started.** HTML reporting, endpoint breakdown, latency graph.
+>
+> Deviations worth knowing, and why:
+>
+> - `run` stays the fixed-rate command (V0.1 shipped it that way); the search is
+>   `capacity`, with `fixed` and `search` as aliases. §28/§29 in this document
+>   fold the two into one command.
+> - Validation is opt-in rather than on by default, so a flag-driven search stays
+>   fast and a config can express "skip it" unambiguously.
+> - Generator-saturation retries (`search.max_vu_growth`, §18) are opt-in: the
+>   default is to abort with advice rather than silently spawn thousands of VUs
+>   on a shared machine.
+> - `validation.window` / `require_all_windows_pass` (§14) are decoded but not yet
+>   used; they belong with the V0.3 reporting work.
+
+---
+
 
 The key idea:
 
@@ -1862,6 +1886,8 @@ I'd do this in **four iterations**.
 
 ## V0.1 — k6 runner
 
+**Implemented.** `autobench run --target ... --rate ... --duration ...`.
+
 Build:
 
 ```bash
@@ -1880,6 +1906,8 @@ Features:
 ---
 
 ## V0.2 — adaptive search
+
+**Implemented.** `autobench capacity config.yaml`.
 
 Add:
 
