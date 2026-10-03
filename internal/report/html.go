@@ -44,6 +44,10 @@ type htmlPage struct {
 	// IterationLatency is the end-to-end journey time, shown only for a journey.
 	IterationLatency []htmlPercentile
 
+	// Status is the response-class split and what it implies.
+	Status     []htmlFact
+	StatusHint string
+
 	// Windowed view: latency over time (PLAN-OUTLINE.md §31).
 	WindowChart template.HTML
 	Windows     []htmlWindow
@@ -155,11 +159,13 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 			{Label: "VUs", Value: fmt.Sprintf("%s pre-allocated / %s max",
 				commafy(int64(r.VUs.PreAllocated)), commafy(int64(r.VUs.Max)))},
 		},
-		Traffic:   trafficFacts(r.Metrics),
-		Latency:   latencyFacts(r.Metrics),
-		Endpoints: endpointRows(r.Metrics),
-		Failures:  r.Failures,
-		Generator: r.Generator,
+		Traffic:    trafficFacts(r.Metrics),
+		Latency:    latencyFacts(r.Metrics),
+		Endpoints:  endpointRows(r.Metrics),
+		Failures:   r.Failures,
+		Generator:  r.Generator,
+		Status:     statusFacts(r.Metrics),
+		StatusHint: statusHint(r.Metrics.StatusClasses),
 	}
 	if cfg.Workload.IsJourney() {
 		page.IterationLatency = latencyFactsOf(r.Metrics.HasIterationLatency,
@@ -187,6 +193,22 @@ func trafficFacts(m metrics.Metrics) []htmlFact {
 
 func latencyFacts(m metrics.Metrics) []htmlPercentile {
 	return latencyFactsOf(m.HasLatency, m.AvgMs, m.MaxMs, m.Percentiles)
+}
+
+// statusFacts renders the response-class split, or nil for a run that only ever
+// saw 2xx.
+func statusFacts(m metrics.Metrics) []htmlFact {
+	if !hasNonSuccess(m.StatusClasses) {
+		return nil
+	}
+	out := make([]htmlFact, 0, len(m.StatusClasses))
+	for _, c := range m.StatusClasses {
+		out = append(out, htmlFact{
+			Label: c.Class,
+			Value: fmt.Sprintf("%s (%s of responses)", commafy(c.Count), pct(c.Share)),
+		})
+	}
+	return out
 }
 
 // latencyFactsOf renders a latency set as label/value pairs, or nil when there
@@ -280,6 +302,8 @@ func RenderCapacityHTML(w io.Writer, cfg *config.Config, out *search.Outcome, ve
 
 	page.Chart = template.HTML(renderChart(out, cfg)) //nolint:gosec // built by us; dynamic text is escaped inside
 	page.WindowChart, page.Windows, page.WindowNote = windowSection(decidingWindows(out), cfg)
+	page.Status = statusFacts(decidingMetrics(out))
+	page.StatusHint = statusHint(decidingMetrics(out).StatusClasses)
 	return renderHTML(w, page)
 }
 

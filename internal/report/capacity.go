@@ -146,6 +146,11 @@ func (p *printer) capacityVerdict(out *search.Outcome) {
 	p.line("  RESULT: " + p.paint(cBold+code, string(verdict)))
 	p.line("")
 
+	// The response-class split of the measurement the verdict rests on.
+	if hint := statusHint(decidingMetrics(out).StatusClasses); hint != "" {
+		p.line("  " + p.paint(cYellow, "⚠ "+hint))
+	}
+
 	if v := out.Validation; v != nil {
 		p.line("  Validation run:")
 		p.line(fmt.Sprintf("    rate       %s/s", commafy(int64(v.Rate))))

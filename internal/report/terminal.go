@@ -94,6 +94,7 @@ func (p *printer) traffic(r *results.Result) {
 		errors = p.paint(cRed, errors)
 	}
 	p.kv("Errors", fmt.Sprintf("%s  (%s)", errors, pct(m.ErrorRate)))
+	p.statusBreakdown(m)
 }
 
 func (p *printer) latency(r *results.Result) {
@@ -139,6 +140,9 @@ func (p *printer) verdict(r *results.Result) {
 
 	for _, f := range r.Failures {
 		p.line("  " + p.paint(cRed, failureLine(f)))
+	}
+	if hint := statusHint(r.Metrics.StatusClasses); hint != "" {
+		p.line("  " + p.paint(cYellow, "⚠ "+hint))
 	}
 	if g := r.Generator; g != nil {
 		p.line("  " + p.paint(cYellow, "⚠ GENERATOR SATURATION"))

@@ -98,6 +98,13 @@ const htmlBody = `<main>
 {{end}}</dl>
 {{end}}
 
+{{if .Status}}
+<h2>Responses</h2>
+<dl>
+{{range .Status}}  <dt>{{.Label}}</dt><dd>{{.Value}}</dd>
+{{end}}</dl>
+{{end}}
+
 {{if .IterationLatency}}
 <h2>Journey latency <span class="note">end to end, all steps</span></h2>
 <dl>
@@ -144,6 +151,10 @@ const htmlBody = `<main>
 <ul class="notes">
 {{range .Failures}}  <li>{{.Metric}}: observed {{.Observed}} {{.Unit}}, limit {{.Limit}} {{.Unit}}</li>
 {{end}}</ul>
+{{end}}
+
+{{if .StatusHint}}
+<div class="warn">{{.StatusHint}}</div>
 {{end}}
 
 {{if .Generator}}
