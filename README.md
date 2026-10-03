@@ -7,10 +7,11 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.6** — `autobench run` (fixed rate) and `autobench capacity`
+> **Status: V0.7** — `autobench run` (fixed rate) and `autobench capacity`
 > (adaptive search) over weighted request pools or multi-step journeys, with
-> per-endpoint and response-class breakdowns, windowed latency analysis, JSON and
-> a self-contained HTML report. See `PLAN-OUTLINE.md`.
+> per-endpoint and response-class breakdowns, windowed latency analysis that
+> attributes a spike to the request that caused it, JSON and a self-contained
+> HTML report. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -306,6 +307,26 @@ says so.
 
 Both the terminal and HTML reports gain a latency-over-time chart with the same
 SLO line as the rate/latency chart.
+
+### Which endpoint caused the spike
+
+A window tells you latency moved; it does not tell you what moved it. Each
+window therefore carries the same per-request breakdown as the run, and the
+report compares each request's worst window against its own run-wide latency:
+
+```
+  Worst window  5s-10s: p95 300.8ms (248.3x the median 1.2ms)
+
+  ENDPOINT DRIFT (worst window vs the run, p95)
+
+  REQUEST                 RUN p95  WORST WINDOW        p95     RATIO
+  slow                      1.3ms        5s-10s    301.1ms    227.6x
+  fast                      1.1ms         0s-5s      1.4ms      1.2x
+```
+
+Worst drift first, so the request to look at leads. This is a diagnostic rather
+than a gate: the run above passed its 500ms p95 SLO, and the table still points
+at `/slow`.
 
 ## Configuration
 
