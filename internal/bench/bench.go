@@ -21,7 +21,7 @@ import (
 // substitute a fake so the sizing, warmup and retry logic can be exercised
 // without spawning k6.
 type K6Runner interface {
-	Run(ctx context.Context, spec runner.Spec) (*metrics.Summary, error)
+	Run(ctx context.Context, spec runner.Spec) (*runner.Outcome, error)
 }
 
 // Measurer runs fixed-rate measurements against a target and carries the state
@@ -38,6 +38,8 @@ type Measurer struct {
 	// MaxVUGrowth bounds how many times a saturated probe may double the VU pool
 	// across the whole search. 0 disables growth.
 	MaxVUGrowth int
+	// Window, when > 0, enables per-window aggregates for every measurement.
+	Window time.Duration
 	// OnProgress receives human-readable notices such as warmup and VU growth.
 	OnProgress func(string)
 
@@ -118,18 +120,21 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		PreAllocatedVUs: plan.PreAllocated,
 		MaxVUs:          plan.Max,
 		Percentiles:     m.Config.Percentiles,
+		Window:          m.Window,
 	}
 
 	started := time.Now()
-	summary, err := m.Runner.Run(ctx, spec)
+	outcome, err := m.Runner.Run(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
 	ended := time.Now()
 
 	cfg := m.Config.ForRate(rate, m.observedLatencyMs)
-	mm := metrics.Extract(summary, cfg.Percentiles)
+	mm := metrics.Extract(outcome.Summary, cfg.Percentiles)
 	verdict, failures, gen := results.Evaluate(cfg, mm)
+	windowFailures := results.WindowFailures(cfg, outcome.Windows)
+	verdict = results.ApplyWindowPolicy(cfg, verdict, windowFailures)
 	m.observe(mm)
 	m.raiseFloor(plan)
 
@@ -137,18 +142,20 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 	// the full k6 metric set per probe would dwarf everything else in the JSON
 	// report. The normalised metrics are what the report and the search use.
 	return &results.Result{
-		Name:      cfg.Name,
-		Target:    cfg.Target.BaseURL,
-		Rate:      rate,
-		TimeUnit:  "1s",
-		Duration:  config.Duration{Duration: duration},
-		VUs:       plan,
-		StartedAt: started,
-		EndedAt:   ended,
-		ElapsedMs: float64(ended.Sub(started)) / float64(time.Millisecond),
-		Metrics:   mm,
-		Verdict:   verdict,
-		Failures:  failures,
-		Generator: gen,
+		Name:           cfg.Name,
+		Target:         cfg.Target.BaseURL,
+		Rate:           rate,
+		TimeUnit:       "1s",
+		Duration:       config.Duration{Duration: duration},
+		VUs:            plan,
+		StartedAt:      started,
+		EndedAt:        ended,
+		ElapsedMs:      float64(ended.Sub(started)) / float64(time.Millisecond),
+		Metrics:        mm,
+		Verdict:        verdict,
+		Failures:       failures,
+		Generator:      gen,
+		Windows:        outcome.Windows,
+		WindowFailures: windowFailures,
 	}, nil
 }

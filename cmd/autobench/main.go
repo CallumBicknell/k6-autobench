@@ -153,7 +153,7 @@ func runCommand(args []string) int {
 	}
 
 	started := time.Now()
-	summary, err := r.Run(ctx, spec)
+	outcome, err := r.Run(ctx, spec)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "autobench: interrupted")
@@ -164,7 +164,7 @@ func runCommand(args []string) int {
 	}
 	ended := time.Now()
 
-	m := metrics.Extract(summary, cfg.Percentiles)
+	m := metrics.Extract(outcome.Summary, cfg.Percentiles)
 	verdict, failures, gen := results.Evaluate(cfg, m)
 
 	res := &results.Result{
@@ -181,7 +181,7 @@ func runCommand(args []string) int {
 		Verdict:   verdict,
 		Failures:  failures,
 		Generator: gen,
-		Raw:       summary.Metrics,
+		Raw:       outcome.Summary.Metrics,
 	}
 
 	color := !noColor && os.Getenv("NO_COLOR") == "" && isTerminal(os.Stdout)

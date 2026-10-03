@@ -30,6 +30,17 @@ type Spec struct {
 	PreAllocatedVUs int
 	MaxVUs          int
 	Percentiles     []float64
+	// Window, when > 0, makes k6 stream per-sample data so the runner can return
+	// per-window aggregates alongside the summary. It costs a sample file
+	// proportional to rate x duration, so it is opt-in.
+	Window time.Duration
+}
+
+// Outcome is what one k6 invocation produced.
+type Outcome struct {
+	Summary *metrics.Summary
+	// Windows holds per-window aggregates; empty unless Spec.Window was set.
+	Windows []metrics.Window
 }
 
 // Runner executes k6.
@@ -52,8 +63,9 @@ type workloadRequest struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// Run executes one k6 run and returns the parsed summary.
-func (r *Runner) Run(ctx context.Context, spec Spec) (*metrics.Summary, error) {
+// Run executes one k6 run and returns the parsed summary plus, when requested,
+// per-window aggregates.
+func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 	k6Path, err := exec.LookPath(r.binary())
 	if err != nil {
 		return nil, fmt.Errorf("k6 binary not found (%q): %w", r.binary(), err)
@@ -76,7 +88,14 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*metrics.Summary, error) {
 		return nil, err
 	}
 
-	args := []string{"run", "--quiet", "--no-color", scriptPath}
+	args := []string{"run", "--quiet", "--no-color"}
+	var samplesPath string
+	if spec.Window > 0 {
+		samplesPath = filepath.Join(tmpDir, "samples.jsonl")
+		args = append(args, "--out", "json="+samplesPath)
+	}
+	args = append(args, scriptPath)
+
 	cmd := exec.CommandContext(ctx, k6Path, args...)
 	cmd.Env = env
 	cmd.Stdin = nil
@@ -116,7 +135,35 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*metrics.Summary, error) {
 	if err := json.Unmarshal(raw, &summary); err != nil {
 		return nil, fmt.Errorf("parse k6 summary: %w", err)
 	}
-	return &summary, nil
+
+	out := &Outcome{Summary: &summary}
+	if samplesPath != "" {
+		windows, err := readSamples(samplesPath, spec)
+		if err != nil {
+			return nil, err
+		}
+		out.Windows = windows
+	}
+	return out, nil
+}
+
+// readSamples parses the JSON-lines sample stream k6 wrote. The temp directory
+// is removed when Run returns, so this must happen before then.
+func readSamples(path string, spec Spec) ([]metrics.Window, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open k6 samples: %w", err)
+	}
+	defer f.Close()
+
+	windows, err := metrics.ReadWindows(f, metrics.WindowConfig{
+		Size:        spec.Window,
+		Percentiles: spec.Percentiles,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("parse k6 samples: %w", err)
+	}
+	return windows, nil
 }
 
 func (r *Runner) binary() string {

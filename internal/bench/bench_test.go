@@ -19,18 +19,27 @@ type fakeRunner struct {
 	// respond builds the summary for a spec; a nil summary means "k6 failed".
 	respond func(spec runner.Spec, call int) *metrics.Summary
 	err     error
+	// windows is returned alongside every summary, standing in for k6's
+	// per-sample stream.
+	windows []metrics.Window
 }
 
-func (f *fakeRunner) Run(_ context.Context, spec runner.Spec) (*metrics.Summary, error) {
+func (f *fakeRunner) Run(_ context.Context, spec runner.Spec) (*runner.Outcome, error) {
 	call := len(f.calls)
 	f.calls = append(f.calls, spec)
 	if f.err != nil {
 		return nil, f.err
 	}
+	var summary *metrics.Summary
 	if f.respond == nil {
-		return passSummary(spec), nil
+		summary = passSummary(spec)
+	} else {
+		summary = f.respond(spec, call)
 	}
-	return f.respond(spec, call), nil
+	if summary == nil {
+		return nil, errors.New("k6 failed")
+	}
+	return &runner.Outcome{Summary: summary, Windows: f.windows}, nil
 }
 
 // passSummary is a k6 summary for a run that met the target rate and breached
