@@ -52,6 +52,8 @@ type htmlPage struct {
 	WindowChart template.HTML
 	Windows     []htmlWindow
 	WindowNote  string
+	// Drift attributes a window spike to the request that caused it.
+	Drift []htmlDrift
 
 	Failures  []results.Failure
 	Generator *results.GeneratorStatus
@@ -102,6 +104,39 @@ type htmlWindow struct {
 	Max      string
 	Worst    bool
 	Sampled  bool
+}
+
+// htmlDrift is one row of the per-request worst-window attribution.
+type htmlDrift struct {
+	Name   string
+	RunP95 string
+	Window string
+	Worst  string
+	Ratio  string
+	// Flag marks a request whose worst window was materially worse than its
+	// run-wide latency, which is the one worth looking at.
+	Flag bool
+}
+
+// driftSection renders the per-request window attribution, worst first.
+func driftSection(ws []metrics.Window, m metrics.Metrics, cfg *config.Config) []htmlDrift {
+	pct, ok := featuredPercentile(cfg.Percentiles)
+	if !ok {
+		return nil
+	}
+	rows := driftRows(ws, m, pct)
+	out := make([]htmlDrift, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, htmlDrift{
+			Name:   row.Name,
+			RunP95: ms(row.RunP95),
+			Window: row.Window,
+			Worst:  ms(row.WorstP95),
+			Ratio:  fmt.Sprintf("%.1fx", row.Ratio),
+			Flag:   row.Ratio >= 2,
+		})
+	}
+	return out
 }
 
 // windowSection renders the windowed view for a report: the chart, the table and
@@ -172,6 +207,7 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 			r.Metrics.IterationAvgMs, r.Metrics.IterationMaxMs, r.Metrics.IterationPercentiles)
 	}
 	page.WindowChart, page.Windows, page.WindowNote = windowSection(r.Windows, cfg)
+	page.Drift = driftSection(r.Windows, r.Metrics, cfg)
 	return renderHTML(w, page)
 }
 
@@ -302,6 +338,7 @@ func RenderCapacityHTML(w io.Writer, cfg *config.Config, out *search.Outcome, ve
 
 	page.Chart = template.HTML(renderChart(out, cfg)) //nolint:gosec // built by us; dynamic text is escaped inside
 	page.WindowChart, page.Windows, page.WindowNote = windowSection(decidingWindows(out), cfg)
+	page.Drift = driftSection(decidingWindows(out), decidingMetrics(out), cfg)
 	page.Status = statusFacts(decidingMetrics(out))
 	page.StatusHint = statusHint(decidingMetrics(out).StatusClasses)
 	return renderHTML(w, page)

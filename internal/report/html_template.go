@@ -22,6 +22,7 @@ main{max-width:820px;margin:0 auto}
 header{border-bottom:1px solid var(--line);padding-bottom:1rem;margin-bottom:1.5rem}
 h1{margin:0;font-size:1.4rem}
 h2{font-size:.8rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:2rem 0 .75rem;font-weight:600}
+h3{font-size:.8rem;letter-spacing:.04em;color:var(--muted);margin:1.5rem 0 .5rem;font-weight:600}
 .sub{color:var(--muted);margin-top:.35rem;font-size:.9rem}
 .verdict{display:inline-block;margin-top:1rem;padding:.4rem .8rem;border-radius:.4rem;font-weight:700;letter-spacing:.03em;font-size:.9rem}
 .verdict.ok{color:var(--ok);border:1px solid var(--ok)}
@@ -132,6 +133,15 @@ const htmlBody = `<main>
 {{range .Windows}}  <tr{{if .Worst}} class="worst"{{end}}><td>{{.Label}}{{if .Worst}} <span class="note">worst</span>{{end}}</td><td class="num">{{.Requests}}</td><td class="num">{{.Errors}}</td><td class="num">{{.P95}}</td><td class="num">{{.P99}}</td><td class="num">{{.Max}}</td></tr>
 {{end}}</tbody>
 </table>
+{{if .Drift}}
+<h3>Endpoint drift</h3>
+<table>
+<thead><tr><th>Request</th><th class="num">Run p95</th><th>Worst window</th><th class="num">p95</th><th class="num">Ratio</th></tr></thead>
+<tbody>
+{{range .Drift}}  <tr{{if .Flag}} class="worst"{{end}}><td>{{.Name}}</td><td class="num">{{.RunP95}}</td><td>{{.Window}}</td><td class="num">{{.Worst}}</td><td class="num">{{.Ratio}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}
 {{end}}
 
 {{if .Probes}}

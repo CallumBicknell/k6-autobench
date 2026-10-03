@@ -66,6 +66,7 @@ func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, 
 	p.iterationLatency(r, cfg)
 	p.endpoints(r.Metrics)
 	p.windows(r.Windows, cfg)
+	p.endpointDrift(r.Windows, r.Metrics, cfg)
 
 	p.separator()
 

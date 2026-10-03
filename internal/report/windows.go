@@ -33,14 +33,120 @@ func featuredPercentile(collected []float64) (float64, bool) {
 	return best, true
 }
 
+// percentileValue reads one percentile out of a collected set.
+func percentileValue(percentiles []metrics.Percentile, p float64) (float64, bool) {
+	return metrics.PercentileAt(percentiles, p)
+}
+
 // windowPercentile reads one percentile out of a window.
 func windowPercentile(w metrics.Window, p float64) (float64, bool) {
-	for _, pc := range w.Percentiles {
-		if pc.P == p {
-			return pc.Val, true
+	return percentileValue(w.Percentiles, p)
+}
+
+// driftRow is one request's worst window against its own run-wide latency.
+type driftRow struct {
+	Name     string
+	RunP95   float64
+	Window   string
+	WorstP95 float64
+	Ratio    float64
+}
+
+// endpointDrift attributes the windowed view to individual requests: for each
+// endpoint, its worst window against its own run-wide latency, worst first.
+//
+// The aggregate window table says latency spiked in 5s-10s. This says which
+// request did it, which is the difference between noticing and diagnosing.
+func (p *printer) endpointDrift(ws []metrics.Window, m metrics.Metrics, cfg *config.Config) {
+	pct, ok := featuredPercentile(cfg.Percentiles)
+	if !ok {
+		return
+	}
+	rows := driftRows(ws, m, pct)
+	if len(rows) == 0 {
+		return
+	}
+
+	p.line("")
+	p.line("  " + p.paint(cBold, fmt.Sprintf("ENDPOINT DRIFT (worst window vs the run, %s)", formatP(pct))))
+	p.line("")
+	p.line("  " + p.paint(cBold, fmt.Sprintf("%-20s%11s%14s%11s%10s",
+		"REQUEST", "RUN p95", "WORST WINDOW", "p95", "RATIO")))
+	for _, row := range rows {
+		ratio := fmt.Sprintf("%.1fx", row.Ratio)
+		if row.Ratio >= 2 {
+			ratio = p.paint(cYellow, ratio)
+		}
+		p.line(fmt.Sprintf("  %-20s%11s%14s%11s%10s",
+			truncate(row.Name, 20),
+			ms(row.RunP95),
+			row.Window,
+			ms(row.WorstP95),
+			ratio,
+		))
+	}
+}
+
+// driftRows finds, for every endpoint that has both a run-wide and a windowed
+// reading, the window where its latency peaked.
+func driftRows(ws []metrics.Window, m metrics.Metrics, p float64) []driftRow {
+	if len(ws) < 2 || len(m.Endpoints) == 0 {
+		return nil
+	}
+
+	var rows []driftRow
+	for _, runEP := range m.Endpoints {
+		base, ok := percentileValue(runEP.Percentiles, p)
+		if !ok || base <= 0 {
+			// Without a baseline there is no drift to measure.
+			continue
+		}
+
+		worst, worstWin, worstVal := -1, -1.0, 0.0
+		for i := range ws {
+			ep := findEndpoint(ws[i].Endpoints, runEP.Name)
+			if ep == nil {
+				continue
+			}
+			v, ok := percentileValue(ep.Percentiles, p)
+			if !ok {
+				continue
+			}
+			if worst < 0 || v > worstVal {
+				worst, worstWin, worstVal = i, v, v
+			}
+		}
+		if worst < 0 {
+			continue
+		}
+
+		rows = append(rows, driftRow{
+			Name:     runEP.Name,
+			RunP95:   base,
+			Window:   windowLabel(ws[worst]),
+			WorstP95: worstWin,
+			Ratio:    worstVal / base,
+		})
+	}
+
+	// Worst drift first: the request that moved most is the one to look at.
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Ratio != rows[j].Ratio {
+			return rows[i].Ratio > rows[j].Ratio
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	return rows
+}
+
+// findEndpoint looks one request up in a window's breakdown.
+func findEndpoint(eps []metrics.Endpoint, name string) *metrics.Endpoint {
+	for i := range eps {
+		if eps[i].Name == name {
+			return &eps[i]
 		}
 	}
-	return 0, false
+	return nil
 }
 
 // windows prints latency over time, so a collapse at the end of a run cannot
