@@ -31,6 +31,9 @@ type Window struct {
 	// so its percentiles come from a prefix of the window rather than all of it.
 	Sampled     bool         `json:"sampled,omitempty"`
 	Percentiles []Percentile `json:"latency_percentiles_ms,omitempty"`
+	// Endpoints is the per-request breakdown of this window, so a spike can be
+	// attributed to the request that caused it rather than only noticed.
+	Endpoints []Endpoint `json:"endpoints,omitempty"`
 }
 
 // DefaultWindowValues is the per-window cap on retained latency samples. It is
@@ -129,7 +132,7 @@ func ReadWindows(r io.Reader, cfg WindowConfig) ([]Window, error) {
 			// to the window we are already in rather than dropping it.
 			idx = cur.index
 		}
-		cur.add(s.Metric, s.Data.Value)
+		cur.add(s.Metric, s.Data.Value, s.Data.Tags["name"])
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -144,8 +147,9 @@ type sample struct {
 	Metric string `json:"metric"`
 	Type   string `json:"type"`
 	Data   struct {
-		Time  time.Time `json:"time"`
-		Value float64   `json:"value"`
+		Time  time.Time         `json:"time"`
+		Value float64           `json:"value"`
+		Tags  map[string]string `json:"tags"`
 	} `json:"data"`
 }
 
@@ -171,20 +175,51 @@ type windowAcc struct {
 	requests  int64
 	failed    int64
 	durations []float64
+	// endpoints holds the same aggregates per request name, so a window can be
+	// attributed. A sample with no name tag counts only towards the window.
+	endpoints map[string]*endpointAcc
 }
 
-func (w *windowAcc) add(metric string, value float64) {
+// endpointAcc accumulates one request name within one window.
+type endpointAcc struct {
+	requests  int64
+	failed    int64
+	durations []float64
+}
+
+func (w *windowAcc) add(metric string, value float64, name string) {
+	var ep *endpointAcc
+	if name != "" {
+		if w.endpoints == nil {
+			w.endpoints = map[string]*endpointAcc{}
+		}
+		ep = w.endpoints[name]
+		if ep == nil {
+			ep = &endpointAcc{}
+			w.endpoints[name] = ep
+		}
+	}
+
 	switch metric {
 	case "http_reqs":
 		w.requests += int64(value)
+		if ep != nil {
+			ep.requests += int64(value)
+		}
 	case "http_req_failed":
 		// A rate point is 1 when the sample was true, and every sample of
 		// http_req_failed is true when a request failed.
 		if value == 1 {
 			w.failed++
+			if ep != nil {
+				ep.failed++
+			}
 		}
 	case "http_req_duration":
 		w.durations = append(w.durations, value)
+		if ep != nil {
+			ep.durations = append(ep.durations, value)
+		}
 	}
 }
 
@@ -200,22 +235,69 @@ func (w *windowAcc) finish(percentiles []float64, maxValues int) Window {
 		out.ErrorRate = float64(w.failed) / float64(w.requests)
 	}
 
-	if len(w.durations) > maxValues {
-		w.durations = w.durations[:maxValues]
-		out.Sampled = true
-	}
-	if len(w.durations) == 0 {
-		return out
+	durations, sampled := capValues(w.durations, maxValues)
+	out.Sampled = sampled
+	if len(durations) > 0 {
+		out.HasLatency = true
+		out.AvgMs = mean(durations)
+		out.MaxMs = durations[len(durations)-1]
+		for _, p := range percentiles {
+			out.Percentiles = append(out.Percentiles, Percentile{P: p, Val: PercentileOf(durations, p)})
+		}
 	}
 
-	sort.Float64s(w.durations)
-	out.HasLatency = true
-	out.AvgMs = mean(w.durations)
-	out.MaxMs = w.durations[len(w.durations)-1]
-	for _, p := range percentiles {
-		out.Percentiles = append(out.Percentiles, Percentile{P: p, Val: PercentileOf(w.durations, p)})
-	}
+	out.Endpoints = finishEndpoints(w.endpoints, percentiles, maxValues)
 	return out
+}
+
+// finishEndpoints renders each request name's slice of the window, busiest first
+// and then by name so the order is stable.
+func finishEndpoints(accs map[string]*endpointAcc, percentiles []float64, maxValues int) []Endpoint {
+	if len(accs) == 0 {
+		return nil
+	}
+	out := make([]Endpoint, 0, len(accs))
+	for name, acc := range accs {
+		durations, sampled := capValues(acc.durations, maxValues)
+		e := Endpoint{
+			Name:     name,
+			Requests: acc.requests,
+			Failed:   acc.failed,
+			Sampled:  sampled,
+		}
+		if acc.requests > 0 {
+			e.ErrorRate = float64(acc.failed) / float64(acc.requests)
+		}
+		if len(durations) > 0 {
+			e.HasLatency = true
+			e.AvgMs = mean(durations)
+			e.MaxMs = durations[len(durations)-1]
+			for _, p := range percentiles {
+				e.Percentiles = append(e.Percentiles, Percentile{P: p, Val: PercentileOf(durations, p)})
+			}
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Requests != out[j].Requests {
+			return out[i].Requests > out[j].Requests
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// capValues sorts and truncates a window's samples to the retention cap,
+// reporting whether anything was dropped.
+func capValues(values []float64, maxValues int) ([]float64, bool) {
+	if len(values) == 0 {
+		return nil, false
+	}
+	sort.Float64s(values)
+	if len(values) > maxValues {
+		return values[:maxValues], true
+	}
+	return values, false
 }
 
 func mean(sorted []float64) float64 {

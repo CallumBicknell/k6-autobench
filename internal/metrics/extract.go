@@ -28,6 +28,9 @@ type Endpoint struct {
 	AvgMs       float64      `json:"latency_avg_ms"`
 	MaxMs       float64      `json:"latency_max_ms"`
 	Percentiles []Percentile `json:"latency_percentiles_ms,omitempty"`
+	// Sampled is set when more samples were seen than the retention cap allows,
+	// so the percentiles come from a prefix.
+	Sampled bool `json:"sampled,omitempty"`
 }
 
 // StatusClass is one bucket of HTTP response statuses. k6's own http_req_failed
@@ -80,14 +83,19 @@ type Metrics struct {
 	IterationPercentiles []Percentile `json:"iteration_percentiles_ms,omitempty"`
 }
 
-// At returns the collected value for percentile p, if present.
-func (m Metrics) At(p float64) (float64, bool) {
-	for _, pc := range m.Percentiles {
+// PercentileAt returns the collected value for percentile p, if present.
+func PercentileAt(percentiles []Percentile, p float64) (float64, bool) {
+	for _, pc := range percentiles {
 		if pc.P == p {
 			return pc.Val, true
 		}
 	}
 	return 0, false
+}
+
+// At returns the collected value for percentile p, if present.
+func (m Metrics) At(p float64) (float64, bool) {
+	return PercentileAt(m.Percentiles, p)
 }
 
 // RateOverScenario recomputes the iteration and request rates over the
