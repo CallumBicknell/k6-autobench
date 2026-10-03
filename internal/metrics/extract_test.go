@@ -123,3 +123,113 @@ func TestPercentileKey(t *testing.T) {
 		}
 	}
 }
+
+// endpointsJSON is the shape k6 emits for a tagged workload: one submetric per
+// request name per metric, alongside the run-level metrics.
+const endpointsJSON = `{
+  "metrics": {
+    "http_reqs": {"type": "counter", "values": {"count": 600, "rate": 199.9}},
+    "http_reqs{name:feed}":        {"type": "counter", "values": {"count": 298, "rate": 99.29}},
+    "http_reqs{name:post}":        {"type": "counter", "values": {"count": 152, "rate": 50.6}},
+    "http_reqs{name:like}":        {"type": "counter", "values": {"count": 90,  "rate": 29.9}},
+    "http_reqs{name:create_post}": {"type": "counter", "values": {"count": 60,  "rate": 19.9}},
+    "http_req_failed{name:feed}":        {"type": "rate", "values": {"rate": 0, "passes": 0, "fails": 298}},
+    "http_req_failed{name:post}":        {"type": "rate", "values": {"rate": 0.0066, "passes": 1, "fails": 151}},
+    "http_req_failed{name:like}":        {"type": "rate", "values": {"rate": 0, "passes": 0, "fails": 90}},
+    "http_req_failed{name:create_post}": {"type": "rate", "values": {"rate": 0.05, "passes": 3, "fails": 57}},
+    "http_req_duration{name:feed}": {
+      "type": "trend",
+      "values": {"avg": 0.96, "max": 5.61, "p(50)": 0.89, "p(95)": 1.31, "p(99)": 3.89}
+    },
+    "http_req_duration{name:post}": {
+      "type": "trend",
+      "values": {"avg": 1.02, "max": 4.10, "p(50)": 0.95, "p(95)": 1.50, "p(99)": 2.20}
+    },
+    "http_req_duration{name:like}": {
+      "type": "trend",
+      "values": {"avg": 0.88, "max": 2.90, "p(50)": 0.80, "p(95)": 1.20, "p(99)": 1.90}
+    },
+    "http_req_duration{expected_response:true}": {
+      "type": "trend",
+      "values": {"avg": 0.9, "max": 5.0, "p(95)": 1.3}
+    }
+  }
+}`
+
+func TestExtractEndpoints(t *testing.T) {
+	m := Extract(mustSummary(t, endpointsJSON), []float64{50, 95, 99})
+
+	if len(m.Endpoints) != 4 {
+		t.Fatalf("len(Endpoints) = %d, want 4: %+v", len(m.Endpoints), m.Endpoints)
+	}
+
+	// Busiest first, so the report leads with the endpoint carrying the load.
+	wantOrder := []string{"feed", "post", "like", "create_post"}
+	for i, want := range wantOrder {
+		if m.Endpoints[i].Name != want {
+			t.Errorf("Endpoints[%d].Name = %q, want %q", i, m.Endpoints[i].Name, want)
+		}
+	}
+
+	feed := m.Endpoints[0]
+	if feed.Requests != 298 || feed.RequestRate != 99.29 {
+		t.Errorf("feed requests = %d (%v/s), want 298 (99.29/s)", feed.Requests, feed.RequestRate)
+	}
+	if feed.Failed != 0 || feed.ErrorRate != 0 {
+		t.Errorf("feed failed = %d (%v), want 0/0", feed.Failed, feed.ErrorRate)
+	}
+	if !feed.HasLatency || feed.AvgMs != 0.96 || feed.MaxMs != 5.61 {
+		t.Errorf("feed latency = %+v, want avg 0.96 max 5.61", feed)
+	}
+	if len(feed.Percentiles) != 3 {
+		t.Fatalf("feed percentiles = %+v, want 3", feed.Percentiles)
+	}
+	if feed.Percentiles[1].P != 95 || feed.Percentiles[1].Val != 1.31 {
+		t.Errorf("feed p95 = %+v, want 1.31", feed.Percentiles[1])
+	}
+
+	// The failure count comes from "passes" for the same reason as the run-level
+	// metric: a true http_req_failed sample means the request failed.
+	createPost := m.Endpoints[3]
+	if createPost.Failed != 3 || createPost.ErrorRate != 0.05 {
+		t.Errorf("create_post failed = %d (%v), want 3 (0.05)", createPost.Failed, createPost.ErrorRate)
+	}
+}
+
+// TestExtractEndpointsIgnoresExpectedResponse guards the submetric prefix match:
+// http_req_duration{expected_response:true} is not a per-name breakdown.
+func TestExtractEndpointsIgnoresExpectedResponse(t *testing.T) {
+	raw := `{"metrics": {
+		"http_req_duration{expected_response:true}": {"type": "trend", "values": {"avg": 1, "p(95)": 2}},
+		"http_req_duration{name:feed}": {"type": "trend", "values": {"avg": 3, "p(95)": 4}}
+	}}`
+	m := Extract(mustSummary(t, raw), []float64{95})
+
+	if len(m.Endpoints) != 1 {
+		t.Fatalf("len(Endpoints) = %d, want 1: %+v", len(m.Endpoints), m.Endpoints)
+	}
+	if m.Endpoints[0].Name != "feed" {
+		t.Errorf("Name = %q, want feed", m.Endpoints[0].Name)
+	}
+}
+
+// TestExtractEndpointsAbsentWithoutSubmetrics: a workload script that does not
+// tag names (or an older summary) must not invent an endpoint list.
+func TestExtractEndpointsAbsentWithoutSubmetrics(t *testing.T) {
+	m := Extract(mustSummary(t, summaryJSON), []float64{95})
+	if len(m.Endpoints) != 0 {
+		t.Errorf("Endpoints = %+v, want none", m.Endpoints)
+	}
+}
+
+func TestExtractEndpointsSortedByNameOnTies(t *testing.T) {
+	raw := `{"metrics": {
+		"http_reqs{name:zeta}":  {"type": "counter", "values": {"count": 5, "rate": 1}},
+		"http_reqs{name:alpha}": {"type": "counter", "values": {"count": 5, "rate": 1}}
+	}}`
+	m := Extract(mustSummary(t, raw), nil)
+
+	if len(m.Endpoints) != 2 || m.Endpoints[0].Name != "alpha" || m.Endpoints[1].Name != "zeta" {
+		t.Errorf("Endpoints = %+v, want alpha then zeta", m.Endpoints)
+	}
+}

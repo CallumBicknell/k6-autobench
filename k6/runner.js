@@ -6,7 +6,11 @@
 // as JSON for the controller to parse and evaluate.
 //
 // The controller owns pass/fail decisions; this script deliberately sets no k6
-// thresholds so that a failing probe does not abort the k6 process.
+// threshold that could abort the run. The thresholds below exist only to make k6
+// emit a per-endpoint submetric for every request in the workload: k6 includes a
+// tagged submetric in the summary when (and only when) a threshold selects it.
+// Each one is written as an always-true condition with abortOnFail disabled, so
+// it can never change the outcome of a run.
 
 import { check } from 'k6';
 import http from 'k6/http';
@@ -26,6 +30,23 @@ const trendStats = ['avg', 'min', 'max', 'med'].concat(
   PERCENTILES.map((p) => `p(${p})`),
 );
 
+// Always-satisfied thresholds, used purely to request a submetric. k6 validates
+// the aggregation method against the metric type, so each kind gets its own.
+const ALWAYS_TREND = [{ threshold: 'p(95)>=0', abortOnFail: false }];
+const ALWAYS_RATE = [{ threshold: 'rate>=0', abortOnFail: false }];
+const ALWAYS_COUNT = [{ threshold: 'count>=0', abortOnFail: false }];
+
+function submetricThresholds() {
+  const thresholds = {};
+  for (const req of WORKLOAD) {
+    const name = req.name || req.path;
+    thresholds[`http_req_duration{name:${name}}`] = ALWAYS_TREND;
+    thresholds[`http_req_failed{name:${name}}`] = ALWAYS_RATE;
+    thresholds[`http_reqs{name:${name}}`] = ALWAYS_COUNT;
+  }
+  return thresholds;
+}
+
 export const options = {
   scenarios: {
     workload: {
@@ -38,6 +59,7 @@ export const options = {
     },
   },
   summaryTrendStats: trendStats,
+  thresholds: submetricThresholds(),
 };
 
 // Pre-compute a cumulative-weight table so each iteration picks a request with
