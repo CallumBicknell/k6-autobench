@@ -1,0 +1,71 @@
+name: social-api-capacity
+
+target:
+  base_url: http://localhost:3000
+
+workload:
+  type: http
+  requests:
+    - name: feed
+      method: GET
+      path: /feed
+      weight: 50
+
+    - name: post
+      method: GET
+      path: /posts/123
+      weight: 25
+
+    - name: like
+      method: POST
+      path: /posts/123/like
+      weight: 15
+
+    - name: create_post
+      method: POST
+      path: /posts
+      weight: 10
+      body: '{"title":"hello"}'
+      headers:
+        Content-Type: application/json
+
+# `autobench capacity` needs no run.rate: search.start_rate is the first rate
+# probed. If you leave start_rate out it falls back to run.rate, so a config
+# written for `autobench run` can be reused for a search unchanged.
+search:
+  strategy: adaptive
+  start_rate: 200
+  increase_factor: 1.5
+  resolution: 50
+  probe_duration: 1m
+  warmup: 10s
+  confirmation_runs: 1
+  failure_confirmation: 1
+  max_probes: 32
+  max_vu_growth: 3
+  # max_rate: 20000 # optional ceiling on the exponential phase
+
+thresholds:
+  error_rate:
+    max: 0.01 # 1%
+
+  latency:
+    p95:
+      max: 250ms
+    p99:
+      max: 1s
+
+# The validation run re-tests the discovered capacity for long enough to trust
+# it. Omit the block (or set duration: 0s) to skip it, in which case the
+# search's own finding is the verdict.
+validation:
+  rate: discovered # or an explicit rate, e.g. 5000
+  duration: 5m
+  safety_margin: 0.9 # validate at 90% of the discovered capacity
+
+# Omit load_generator to auto-size the VU pool per probe from the observed
+# latency. Pin it only if you need to cap the generator; a pinned pool also
+# stops autobench from growing its way out of generator saturation.
+# load_generator:
+#   pre_allocated_vus: 100
+#   max_vus: 400

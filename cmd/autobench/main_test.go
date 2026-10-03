@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/callum/k6-autobench/internal/config"
 )
 
 // runFlags mirrors the variables runCommand binds its flags to.
@@ -148,8 +150,9 @@ run:
   duration: 30s
 `)
 
-	cfg, code := buildConfig(path, map[string]bool{"rate": true, "duration": true},
-		"", 250, "5s", 0, 0, "")
+	cfg, code := buildConfig(path, config.ModeFixed,
+		map[string]bool{"rate": true, "duration": true},
+		overrides{rate: 250, duration: "5s"})
 	if code != exitPass {
 		t.Fatalf("buildConfig code = %d, want %d", code, exitPass)
 	}
@@ -168,8 +171,9 @@ run:
 }
 
 func TestBuildConfigWithoutFileUsesFlags(t *testing.T) {
-	cfg, code := buildConfig("", map[string]bool{"target": true, "rate": true, "duration": true},
-		"http://localhost:9999", 50, "3s", 0, 0, "")
+	cfg, code := buildConfig("", config.ModeFixed,
+		map[string]bool{"target": true, "rate": true, "duration": true},
+		overrides{target: "http://localhost:9999", rate: 50, duration: "3s"})
 	if code != exitPass {
 		t.Fatalf("buildConfig code = %d, want %d", code, exitPass)
 	}
@@ -186,15 +190,16 @@ func TestBuildConfigWithoutFileUsesFlags(t *testing.T) {
 }
 
 func TestBuildConfigRejectsBadDuration(t *testing.T) {
-	_, code := buildConfig("", map[string]bool{"target": true, "rate": true, "duration": true},
-		"http://localhost:9999", 50, "soon", 0, 0, "")
+	_, code := buildConfig("", config.ModeFixed,
+		map[string]bool{"target": true, "rate": true, "duration": true},
+		overrides{target: "http://localhost:9999", rate: 50, duration: "soon"})
 	if code != exitError {
 		t.Errorf("buildConfig code = %d, want %d", code, exitError)
 	}
 }
 
 func TestBuildConfigMissingFile(t *testing.T) {
-	_, code := buildConfig(filepath.Join(t.TempDir(), "nope.yaml"), nil, "", 0, "", 0, 0, "")
+	_, code := buildConfig(filepath.Join(t.TempDir(), "nope.yaml"), config.ModeFixed, nil, overrides{})
 	if code != exitError {
 		t.Errorf("buildConfig code = %d, want %d", code, exitError)
 	}
@@ -203,9 +208,140 @@ func TestBuildConfigMissingFile(t *testing.T) {
 // TestBuildConfigValidates: a config with no target must be rejected before k6
 // is ever spawned.
 func TestBuildConfigValidates(t *testing.T) {
-	_, code := buildConfig("", map[string]bool{"rate": true, "duration": true},
-		"", 50, "3s", 0, 0, "")
+	_, code := buildConfig("", config.ModeFixed,
+		map[string]bool{"rate": true, "duration": true},
+		overrides{rate: 50, duration: "3s"})
 	if code != exitError {
 		t.Errorf("buildConfig code = %d, want %d", code, exitError)
+	}
+}
+
+// TestBuildConfigCapacityFromFlagsOnly: a capacity search needs no config file
+// at all, and the fixed-rate requirements (run.rate, run.duration) must not
+// apply.
+func TestBuildConfigCapacityFromFlagsOnly(t *testing.T) {
+	cfg, code := buildConfig("", config.ModeCapacity,
+		map[string]bool{"target": true, "start-rate": true, "probe-duration": true},
+		overrides{target: "http://localhost:9999", startRate: 500, probeDuration: "20s"})
+	if code != exitPass {
+		t.Fatalf("buildConfig code = %d, want %d", code, exitPass)
+	}
+	if cfg.Search.StartRate != 500 {
+		t.Errorf("start_rate = %d, want 500", cfg.Search.StartRate)
+	}
+	if cfg.Search.ProbeDuration.Duration != 20*time.Second {
+		t.Errorf("probe_duration = %v, want 20s", cfg.Search.ProbeDuration.Duration)
+	}
+	if cfg.Run.Rate != 0 {
+		t.Errorf("run.rate = %d, want 0 (unused by a capacity search)", cfg.Run.Rate)
+	}
+	// Search defaults fill in the rest.
+	if cfg.Search.IncreaseFactor != config.DefaultIncreaseFactor {
+		t.Errorf("increase_factor = %g, want the default %g",
+			cfg.Search.IncreaseFactor, config.DefaultIncreaseFactor)
+	}
+	if cfg.Search.Resolution != config.DefaultResolution {
+		t.Errorf("resolution = %d, want the default %d",
+			cfg.Search.Resolution, config.DefaultResolution)
+	}
+}
+
+// TestBuildConfigCapacityFlagBeatsFile: a flag must be able to supply what the
+// config file omits, which is why the file is decoded before it is validated.
+func TestBuildConfigCapacityFlagBeatsFile(t *testing.T) {
+	path := writeBenchConfig(t, `
+target:
+  base_url: http://localhost:3000
+`)
+
+	if _, code := buildConfig(path, config.ModeCapacity, nil, overrides{}); code != exitError {
+		t.Fatalf("buildConfig code = %d, want %d without a start rate", code, exitError)
+	}
+
+	cfg, code := buildConfig(path, config.ModeCapacity,
+		map[string]bool{"start-rate": true}, overrides{startRate: 250})
+	if code != exitPass {
+		t.Fatalf("buildConfig code = %d, want %d with --start-rate", code, exitPass)
+	}
+	if cfg.Search.StartRate != 250 {
+		t.Errorf("start_rate = %d, want the flag value 250", cfg.Search.StartRate)
+	}
+}
+
+// TestBuildConfigCapacityUsesRunRateAsStartRate: a config written for a fixed
+// run can be reused for a capacity search without repeating the rate.
+func TestBuildConfigCapacityUsesRunRateAsStartRate(t *testing.T) {
+	path := writeBenchConfig(t, `
+target:
+  base_url: http://localhost:3000
+run:
+  rate: 750
+  duration: 30s
+`)
+
+	cfg, code := buildConfig(path, config.ModeCapacity, nil, overrides{})
+	if code != exitPass {
+		t.Fatalf("buildConfig code = %d, want %d", code, exitPass)
+	}
+	if cfg.Search.StartRate != 750 {
+		t.Errorf("start_rate = %d, want run.rate 750", cfg.Search.StartRate)
+	}
+}
+
+// TestBuildConfigCapacityRejectsBadSearchValues covers the mode-aware validation
+// of the search block.
+func TestBuildConfigCapacityRejectsBadSearchValues(t *testing.T) {
+	const target = "http://localhost:9999"
+	base := func(extra map[string]bool) map[string]bool {
+		set := map[string]bool{"target": true, "start-rate": true}
+		for k := range extra {
+			set[k] = true
+		}
+		return set
+	}
+
+	tests := []struct {
+		name string
+		set  map[string]bool
+		ov   overrides
+	}{
+		{name: "increase factor at 1", set: base(map[string]bool{"increase-factor": true}),
+			ov: overrides{target: target, startRate: 100, increaseFactor: 1}},
+		{name: "negative resolution", set: base(map[string]bool{"resolution": true}),
+			ov: overrides{target: target, startRate: 100, resolution: -1}},
+		{name: "safety margin above 1", set: base(map[string]bool{"safety-margin": true}),
+			ov: overrides{target: target, startRate: 100, safetyMargin: 1.5}},
+		{name: "garbage validation rate", set: base(map[string]bool{"validation-rate": true}),
+			ov: overrides{target: target, startRate: 100, validationRate: "fast"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, code := buildConfig("", config.ModeCapacity, tc.set, tc.ov); code != exitError {
+				t.Errorf("buildConfig code = %d, want %d", code, exitError)
+			}
+		})
+	}
+}
+
+// TestParseFlagsCapacityFlags checks the capacity flag set parses flags that
+// follow the positional config path, mirroring the fixed-rate regression test.
+func TestParseFlagsCapacityFlags(t *testing.T) {
+	var ov overrides
+	fs := flag.NewFlagSet("capacity", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&ov.configPath, "config", "", "")
+	fs.StringVar(&ov.configPath, "c", "", "")
+	fs.IntVar(&ov.startRate, "start-rate", 0, "")
+	fs.StringVar(&ov.probeDuration, "probe-duration", "", "")
+	fs.StringVar(&ov.validationRate, "validation-rate", "", "")
+
+	args := []string{"bench.yaml", "--start-rate", "300", "--probe-duration", "15s",
+		"--validation-rate", "discovered"}
+	if code := parseFlags(fs, args, &ov.configPath); code != exitPass {
+		t.Fatalf("parseFlags = %d, want %d", code, exitPass)
+	}
+	if ov.configPath != "bench.yaml" || ov.startRate != 300 ||
+		ov.probeDuration != "15s" || ov.validationRate != "discovered" {
+		t.Errorf("unexpected overrides: %+v", ov)
 	}
 }

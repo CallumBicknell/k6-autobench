@@ -42,8 +42,10 @@ func run(args []string) int {
 		return exitError
 	}
 	switch args[0] {
-	case "run":
+	case "run", "fixed":
 		return runCommand(args[1:])
+	case "capacity", "search":
+		return capacityCommand(args[1:])
 	case "version", "--version", "-v":
 		fmt.Printf("autobench %s\n", version)
 		return exitPass
@@ -60,44 +62,70 @@ func run(args []string) int {
 	}
 }
 
+// overrides carries the flag values that may replace configuration fields. The
+// caller passes the set of flags the user actually typed, so an unset flag
+// always leaves the config file's value alone.
+type overrides struct {
+	configPath string
+	target     string
+	timeUnit   string
+	vus        int
+	maxVUs     int
+
+	// Fixed-rate run.
+	rate     int
+	duration string
+
+	// Capacity search.
+	startRate      int
+	increaseFactor float64
+	resolution     int
+	probeDuration  string
+	warmup         string
+	confirmRuns    int
+	failConfirm    int
+	maxRate        int
+	maxProbes      int
+	maxVUGrowth    int
+
+	// Validation.
+	validationDur  string
+	validationRate string
+	safetyMargin   float64
+}
+
 func runCommand(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
 	var (
-		configPath string
-		target     string
-		rate       int
-		duration   string
-		vus        int
-		maxVUs     int
-		timeUnit   string
+		ov         overrides
 		k6Path     string
 		scriptPath string
 		jsonOut    string
 		noColor    bool
 	)
-	fs.StringVar(&configPath, "config", "", "path to a YAML config file")
-	fs.StringVar(&configPath, "c", "", "path to a YAML config file (shorthand)")
-	fs.StringVar(&target, "target", "", "target base URL (overrides config)")
-	fs.IntVar(&rate, "rate", 0, "iteration rate (overrides config run.rate)")
-	fs.StringVar(&duration, "duration", "", "run duration, e.g. 30s or 2m (overrides config)")
-	fs.IntVar(&vus, "vus", 0, "pre-allocated VUs (overrides config)")
-	fs.IntVar(&maxVUs, "max-vus", 0, "maximum VUs (overrides config)")
-	fs.StringVar(&timeUnit, "time-unit", "", "arrival-rate time unit, e.g. 1s (overrides config)")
+	fs.StringVar(&ov.configPath, "config", "", "path to a YAML config file")
+	fs.StringVar(&ov.configPath, "c", "", "path to a YAML config file (shorthand)")
+	fs.StringVar(&ov.target, "target", "", "target base URL (overrides config)")
+	fs.IntVar(&ov.rate, "rate", 0, "iteration rate (overrides config run.rate)")
+	fs.StringVar(&ov.duration, "duration", "", "run duration, e.g. 30s or 2m (overrides config)")
+	fs.IntVar(&ov.vus, "vus", 0, "pre-allocated VUs (overrides config)")
+	fs.IntVar(&ov.maxVUs, "max-vus", 0, "maximum VUs (overrides config)")
+	fs.StringVar(&ov.timeUnit, "time-unit", "", "arrival-rate time unit, e.g. 1s (overrides config)")
 	fs.StringVar(&k6Path, "k6", "", "path to the k6 binary (default: $AUTOBENCH_K6 or \"k6\")")
 	fs.StringVar(&scriptPath, "script", "", "override the embedded k6 workload script")
 	fs.StringVar(&jsonOut, "json", "", "write the full result as JSON to this path")
 	fs.BoolVar(&noColor, "no-color", false, "disable coloured output")
 	fs.Usage = func() { runUsage(fs) }
 
-	if code := parseFlags(fs, args, &configPath); code != exitPass {
+	if code := parseFlags(fs, args, &ov.configPath); code != exitPass {
 		return code
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-	cfg, code := buildConfig(configPath, set, target, rate, duration, vus, maxVUs, timeUnit)
+	cfg, code := buildConfig(ov.configPath, config.ModeFixed, set, ov)
 	if cfg == nil {
 		return code
 	}
@@ -156,7 +184,7 @@ func runCommand(args []string) int {
 	report.Render(os.Stdout, cfg, res, version, color)
 
 	if jsonOut != "" {
-		if err := writeJSON(jsonOut, res); err != nil {
+		if err := writeJSONFile(jsonOut, res); err != nil {
 			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
 			return exitError
 		}
@@ -197,12 +225,14 @@ func parseFlags(fs *flag.FlagSet, args []string, configPath *string) int {
 }
 
 // buildConfig loads an optional config file, applies flag overrides, then
-// applies defaults and validates. It returns a nil config and an exit code on
-// failure.
-func buildConfig(path string, set map[string]bool, target string, rate int, duration string, vus, maxVUs int, timeUnit string) (*config.Config, int) {
+// applies defaults and validates for the given mode. It returns a nil config
+// and an exit code on failure.
+func buildConfig(path string, mode config.Mode, set map[string]bool, ov overrides) (*config.Config, int) {
 	var cfg *config.Config
 	if path != "" {
-		loaded, err := config.Load(path)
+		// Decode without validating: a flag may supply something the file omits
+		// (e.g. --start-rate for a config with no search block).
+		loaded, err := config.Decode(path)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
 			return nil, exitError
@@ -213,39 +243,96 @@ func buildConfig(path string, set map[string]bool, target string, rate int, dura
 	}
 
 	if set["target"] {
-		cfg.Target.BaseURL = target
-	}
-	if set["rate"] {
-		cfg.Run.Rate = rate
+		cfg.Target.BaseURL = ov.target
 	}
 	if set["time-unit"] {
-		cfg.Run.TimeUnit = timeUnit
+		cfg.Run.TimeUnit = ov.timeUnit
+	}
+	if set["rate"] {
+		cfg.Run.Rate = ov.rate
 	}
 	if set["vus"] {
-		cfg.LoadGenerator.PreAllocatedVUs = vus
+		cfg.LoadGenerator.PreAllocatedVUs = ov.vus
+		cfg.PinPreAllocatedVUs()
 	}
 	if set["max-vus"] {
-		cfg.LoadGenerator.MaxVUs = maxVUs
+		cfg.LoadGenerator.MaxVUs = ov.maxVUs
+		cfg.PinMaxVUs()
 	}
-	if set["duration"] {
-		d, err := time.ParseDuration(duration)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "autobench: invalid --duration %q: %v\n", duration, err)
+
+	durations := []struct {
+		flag  string
+		value string
+		dst   *config.Duration
+	}{
+		{"duration", ov.duration, &cfg.Run.Duration},
+		{"probe-duration", ov.probeDuration, &cfg.Search.ProbeDuration},
+		{"warmup", ov.warmup, &cfg.Search.Warmup},
+		{"validation-duration", ov.validationDur, &cfg.Validation.Duration},
+	}
+	for _, d := range durations {
+		if !set[d.flag] {
+			continue
+		}
+		parsed, ok := parseDurationFlag("--"+d.flag, d.value)
+		if !ok {
 			return nil, exitError
 		}
-		cfg.Run.Duration = config.Duration{Duration: d}
+		d.dst.Duration = parsed
+	}
+
+	if set["start-rate"] {
+		cfg.Search.StartRate = ov.startRate
+	}
+	if set["increase-factor"] {
+		cfg.Search.IncreaseFactor = ov.increaseFactor
+	}
+	if set["resolution"] {
+		cfg.Search.Resolution = ov.resolution
+	}
+	if set["confirmation-runs"] {
+		cfg.Search.ConfirmationRuns = ov.confirmRuns
+	}
+	if set["failure-confirmation"] {
+		cfg.Search.FailureConfirmation = ov.failConfirm
+	}
+	if set["max-rate"] {
+		cfg.Search.MaxRate = ov.maxRate
+	}
+	if set["max-probes"] {
+		cfg.Search.MaxProbes = ov.maxProbes
+	}
+	if set["max-vu-growth"] {
+		cfg.Search.MaxVUGrowth = ov.maxVUGrowth
+	}
+	if set["validation-rate"] {
+		cfg.Validation.Rate = ov.validationRate
+	}
+	if set["safety-margin"] {
+		cfg.Validation.SafetyMargin = ov.safetyMargin
 	}
 
 	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateMode(mode); err != nil {
 		fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
 		return nil, exitError
 	}
 	return cfg, exitPass
 }
 
-func writeJSON(path string, res *results.Result) error {
-	b, err := json.MarshalIndent(res, "", "  ")
+// parseDurationFlag parses a duration flag, reporting the error to stderr.
+func parseDurationFlag(name, value string) (time.Duration, bool) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "autobench: invalid %s %q: %v\n", name, value, err)
+		return 0, false
+	}
+	return d, true
+}
+
+// writeJSONFile writes v to path as indented JSON.
+func writeJSONFile(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode result: %w", err)
 	}
@@ -269,16 +356,18 @@ func usage(w *os.File) {
 Usage:
   autobench run [flags] [config.yaml]
   autobench run bench.yaml --rate 5000 --duration 2m
+  autobench capacity [flags] [config.yaml]
   autobench version
 
 Commands:
-  run        Run a fixed-rate load test and report the result
+  run        Run a fixed-rate load test and report the result (alias: fixed)
+  capacity   Search for the maximum sustainable iteration rate (alias: search)
   version    Print the autobench version
   help       Show this help
 
 Exit codes:
   0  all thresholds passed
-  1  a threshold failed or the load generator saturated
+  1  a threshold failed, no capacity was found, or the load generator saturated
   2  usage or runtime error
 
 `, version)
