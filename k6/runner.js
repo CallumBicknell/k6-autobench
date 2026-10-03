@@ -13,6 +13,7 @@
 // it can never change the outcome of a run.
 
 import { check } from 'k6';
+import { Counter } from 'k6/metrics';
 import http from 'k6/http';
 
 const RATE = Number(__ENV.AUTOBENCH_RATE || '0');
@@ -98,6 +99,28 @@ function doRequest(req) {
   return http.request(method, BASE_URL + req.path, req.body || null, params);
 }
 
+// Response classes, declared up front because k6 metrics must exist before the
+// test starts. k6's own http_req_failed tells you that requests failed but not
+// how: a 4xx storm means the workload is wrong, a 5xx storm means the system
+// under test is. The controller reports the split (PLAN-OUTLINE.md section 30).
+const statusClasses = {
+  2: new Counter('ab_status_2xx'),
+  3: new Counter('ab_status_3xx'),
+  4: new Counter('ab_status_4xx'),
+  5: new Counter('ab_status_5xx'),
+};
+const statusOther = new Counter('ab_status_other');
+
+function recordStatus(res) {
+  const bucket = statusClasses[Math.floor(res.status / 100)];
+  if (bucket) {
+    bucket.add(1);
+    return;
+  }
+  // A non-HTTP status, or a transport error reported as 0.
+  statusOther.add(1);
+}
+
 // One iteration is either a single weighted request, or every step of a journey
 // in order. The controller reports the two rates separately because they differ
 // by a factor of the journey length (PLAN-OUTLINE.md section 11).
@@ -105,6 +128,7 @@ export default function () {
   if (WORKLOAD_MODE === 'journey') {
     for (const req of WORKLOAD) {
       const res = doRequest(req);
+      recordStatus(res);
       check(res, { 'status < 400': (r) => r.status < 400 });
     }
     return;
@@ -115,6 +139,7 @@ export default function () {
     return;
   }
   const res = doRequest(req);
+  recordStatus(res);
   check(res, { 'status < 400': (r) => r.status < 400 });
 }
 

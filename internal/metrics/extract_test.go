@@ -311,3 +311,53 @@ func TestRateOverScenarioIgnoresBadDuration(t *testing.T) {
 		t.Errorf("DeclaredDurationMs = %v, want 0", m.DeclaredDurationMs)
 	}
 }
+
+// TestExtractStatusClasses: k6's http_req_failed says requests failed but not
+// how. A 4xx storm and a 5xx storm mean opposite things.
+func TestExtractStatusClasses(t *testing.T) {
+	raw := `{"metrics": {
+		"ab_status_2xx": {"type": "counter", "values": {"count": 250, "rate": 50}},
+		"ab_status_5xx": {"type": "counter", "values": {"count": 750, "rate": 150}},
+		"ab_status_4xx": {"type": "counter", "values": {"count": 0,   "rate": 0}}
+	}}`
+	m := Extract(mustSummary(t, raw), nil)
+
+	if len(m.StatusClasses) != 2 {
+		t.Fatalf("classes = %+v, want 2 (a class with no samples is dropped)", m.StatusClasses)
+	}
+	// Reporting order: success first, then the classes that indicate trouble.
+	if m.StatusClasses[0].Class != "2xx" || m.StatusClasses[1].Class != "5xx" {
+		t.Errorf("order = %s, %s; want 2xx then 5xx", m.StatusClasses[0].Class, m.StatusClasses[1].Class)
+	}
+	if got := m.StatusClasses[1]; got.Count != 750 || got.Rate != 150 {
+		t.Errorf("5xx = %+v, want 750 at 150/s", got)
+	}
+	// Shares are over all responses, not just the classes present.
+	if m.StatusClasses[0].Share != 0.25 || m.StatusClasses[1].Share != 0.75 {
+		t.Errorf("shares = %v/%v, want 0.25/0.75",
+			m.StatusClasses[0].Share, m.StatusClasses[1].Share)
+	}
+}
+
+func TestExtractStatusClassesAbsent(t *testing.T) {
+	m := Extract(mustSummary(t, summaryJSON), nil)
+	if len(m.StatusClasses) != 0 {
+		t.Errorf("classes = %+v, want none when the script records no classes", m.StatusClasses)
+	}
+}
+
+// TestExtractStatusClassesOther: a transport failure reports status 0, which
+// belongs to no HTTP class and must not be silently dropped.
+func TestExtractStatusClassesOther(t *testing.T) {
+	raw := `{"metrics": {
+		"ab_status_other": {"type": "counter", "values": {"count": 12, "rate": 3}}
+	}}`
+	m := Extract(mustSummary(t, raw), nil)
+
+	if len(m.StatusClasses) != 1 || m.StatusClasses[0].Class != "other" {
+		t.Fatalf("classes = %+v, want a single 'other'", m.StatusClasses)
+	}
+	if m.StatusClasses[0].Share != 1 {
+		t.Errorf("share = %v, want 1", m.StatusClasses[0].Share)
+	}
+}

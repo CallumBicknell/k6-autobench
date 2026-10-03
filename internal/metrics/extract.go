@@ -30,6 +30,20 @@ type Endpoint struct {
 	Percentiles []Percentile `json:"latency_percentiles_ms,omitempty"`
 }
 
+// StatusClass is one bucket of HTTP response statuses. k6's own http_req_failed
+// says that requests failed but not how, and the difference matters: a 4xx storm
+// means the workload is wrong, a 5xx storm means the system under test is.
+type StatusClass struct {
+	Class string  `json:"class"` // "2xx", "3xx", "4xx", "5xx" or "other"
+	Count int64   `json:"count"`
+	Rate  float64 `json:"rate"`
+	Share float64 `json:"share"` // fraction of all responses
+}
+
+// StatusClassPrefix is the k6 metric prefix the workload script uses for its
+// response-class counters.
+const StatusClassPrefix = "ab_status_"
+
 // Metrics is the normalised, controller-facing view of a k6 summary.
 type Metrics struct {
 	HasLatency        bool         `json:"has_latency"`
@@ -53,6 +67,9 @@ type Metrics struct {
 	// Endpoints is empty when the summary carries no per-name submetrics (for
 	// example a summary produced by a workload script that does not tag names).
 	Endpoints []Endpoint `json:"endpoints,omitempty"`
+	// StatusClasses is the response-class split, empty when the workload script
+	// does not record it.
+	StatusClasses []StatusClass `json:"status_classes,omitempty"`
 
 	// Iteration latency is the end-to-end time for one iteration. For a
 	// multi-step journey that is what a user actually waits for, where
@@ -133,10 +150,44 @@ func Extract(s *Summary, percentiles []float64) Metrics {
 	}
 	m.TestDurationMs = s.State.TestRunDurationMs
 	m.Endpoints = extractEndpoints(s, percentiles)
+	m.StatusClasses = extractStatusClasses(s)
 	m.HasIterationLatency, m.IterationAvgMs, m.IterationMaxMs, m.IterationPercentiles =
 		extractIterationLatency(s, percentiles)
 
 	return m
+}
+
+// statusClassOrder is the reporting order: the classes a healthy run lives in
+// first, then the ones that indicate trouble.
+var statusClassOrder = []string{"2xx", "3xx", "4xx", "5xx", "other"}
+
+// extractStatusClasses reads the workload script's response-class counters.
+// Classes with no samples are dropped, so the report only lists what happened.
+func extractStatusClasses(s *Summary) []StatusClass {
+	byClass := map[string]StatusClass{}
+	var total int64
+
+	for _, class := range statusClassOrder {
+		count, rate, ok := s.Counter(StatusClassPrefix + class)
+		if !ok || count == 0 {
+			continue
+		}
+		n := int64(count)
+		byClass[class] = StatusClass{Class: class, Count: n, Rate: rate}
+		total += n
+	}
+	if total == 0 {
+		return nil
+	}
+
+	out := make([]StatusClass, 0, len(byClass))
+	for _, class := range statusClassOrder {
+		if c, ok := byClass[class]; ok {
+			c.Share = float64(c.Count) / float64(total)
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // extractIterationLatency pulls the end-to-end iteration timing out of the
