@@ -7,10 +7,10 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.5** — `autobench run` (fixed rate) and `autobench capacity`
+> **Status: V0.6** — `autobench run` (fixed rate) and `autobench capacity`
 > (adaptive search) over weighted request pools or multi-step journeys, with
-> per-endpoint breakdowns, windowed latency analysis, JSON and a self-contained
-> HTML report. See `PLAN-OUTLINE.md`.
+> per-endpoint and response-class breakdowns, windowed latency analysis, JSON and
+> a self-contained HTML report. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -170,6 +170,36 @@ k6 more VUs than the attempt that saturated. Anything you pin in
 `load_generator` is left alone.
 
 ## Reporting
+
+### Response classes
+
+`FAIL_ERRORS` says requests failed; it does not say how, and the difference
+changes the conclusion. The workload script counts each response by class, so the
+report can:
+
+```
+  Errors        3,351  (93.057%)
+    2xx               250  (6.943% of responses)
+    5xx               3,351  (93.057% of responses)
+  ...
+  RESULT: FAIL_ERRORS
+  ⚠ 93.057% of responses were 5xx: the system under test is failing.
+```
+
+A 4xx storm is the benchmark's fault, and the report says so:
+
+```
+  ⚠ 100.000% of responses were 4xx: the target is rejecting these requests —
+    check the workload (paths, methods, bodies) before reading the rest as capacity.
+```
+
+3xx and status-less (transport) responses get their own explanation. The
+breakdown is printed only when something other than 2xx was seen, so a healthy
+run stays quiet.
+
+The classes come from four counters the workload script declares up front
+(`ab_status_2xx` … `ab_status_5xx`, plus `ab_status_other`), because k6 metrics
+must exist before a test starts.
 
 ### Endpoint breakdown
 

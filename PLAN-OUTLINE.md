@@ -14,6 +14,12 @@
 >   (`internal/metrics`, `internal/results`, `internal/report`.)
 > - **V0.5 — done.** Multi-step journeys (`workload.journey`), with iteration rate
 >   and request rate reported separately, and end-to-end journey latency.
+> - **V0.6 — done.** Response-class breakdown (2xx/3xx/4xx/5xx/other) with a plain
+>   reading of what the mix implies.
+>
+> Still open: per-endpoint windowed percentiles (the window view is aggregate
+> only), and the resource/database collectors of §33, which need to observe the
+> system under test rather than wrap k6.
 >
 > Deviations worth knowing, and why:
 >
@@ -1652,6 +1658,12 @@ autobench compare run1 run2
 ---
 
 # 30. Metrics I'd collect
+
+**Mostly implemented.** Traffic, latency percentiles, generator state and the
+per-endpoint breakdown all land in the report; the error breakdown by status
+class (§30's 2xx/3xx/4xx/5xx) is reported with a plain reading of what the mix
+implies. Not collected: generator CPU and memory, which would need to observe the
+host rather than k6.
 
 At minimum:
 
