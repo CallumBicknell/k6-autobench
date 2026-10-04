@@ -23,6 +23,13 @@ const (
 	// VerdictFailNoCapacity is reported by a capacity search that could not find
 	// any passing rate, because even search.start_rate breached the SLOs.
 	VerdictFailNoCapacity Verdict = "FAIL_NO_CAPACITY"
+	// VerdictFailNoResponse is reported when not one request received an HTTP
+	// response, so the run measured nothing about the target.
+	//
+	// It is not a statement that the system is slow or failing: it is a statement
+	// that the benchmark never reached it. A pass would claim otherwise, which is
+	// how a benchmark pointed at a dead service used to go green.
+	VerdictFailNoResponse Verdict = "FAIL_NO_RESPONSE"
 )
 
 // OK reports whether the verdict is a pass.

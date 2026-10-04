@@ -229,3 +229,86 @@ func TestEvaluateTargetRatePerSecondHonoursTimeUnit(t *testing.T) {
 		t.Errorf("verdict = %s, generator = %+v; want FAIL_GENERATOR", verdict, gen)
 	}
 }
+
+// noThresholds clears the SLOs, which is the case the false green lived in: with
+// nothing configured there is nothing to breach, so every run passed.
+func noThresholds() *config.Config {
+	cfg := baseConfig()
+	cfg.Thresholds = config.Thresholds{}
+	return cfg
+}
+
+// TestEvaluateReportsNoResponseWhenNothingAnswered is the regression test for a
+// false green: a benchmark pointed at a service that never answers used to pass,
+// because with no error threshold configured there was nothing to breach.
+func TestEvaluateReportsNoResponseWhenNothingAnswered(t *testing.T) {
+	m := metrics.Metrics{
+		Requests: 41, FailedRequests: 41, ErrorRate: 1,
+		Iterations: 41, IterationRate: 100, // k6 reached the rate: not saturated
+		Unanswered:    true, // set by Extract, along with the latency drop
+		StatusClasses: []metrics.StatusClass{{Class: metrics.StatusClassOther, Count: 41, Share: 1}},
+	}
+
+	verdict, failures, gen := Evaluate(noThresholds(), m)
+
+	if gen != nil {
+		t.Fatalf("generator = %+v, want nil: reaching the rate is not saturation", gen)
+	}
+	if verdict != VerdictFailNoResponse {
+		t.Errorf("verdict = %q, want %q", verdict, VerdictFailNoResponse)
+	}
+	if len(failures) != 0 {
+		t.Errorf("failures = %+v, want none: this is not a threshold breach", failures)
+	}
+	if verdict.OK() {
+		t.Error("OK() = true, want a failing verdict so a pipeline sees it")
+	}
+}
+
+// TestEvaluateNoResponseOutranksGeneratorSaturation: a target that hangs produces
+// both, and the cause is the more useful answer. Telling someone to raise max_vus
+// when their service is not answering sends them the wrong way.
+func TestEvaluateNoResponseOutranksGeneratorSaturation(t *testing.T) {
+	m := metrics.Metrics{
+		Iterations: 10, IterationRate: 5, // far below the 100/s target: saturated
+		DroppedIterations: 100,
+		Unanswered:        true,
+		StatusClasses:     []metrics.StatusClass{{Class: metrics.StatusClassOther, Count: 10, Share: 1}},
+	}
+
+	verdict, _, gen := Evaluate(noThresholds(), m)
+
+	if gen == nil {
+		t.Fatal("the fixture should look saturated")
+	}
+	if verdict != VerdictFailNoResponse {
+		t.Errorf("verdict = %q, want %q to outrank %q",
+			verdict, VerdictFailNoResponse, VerdictFailGenerator)
+	}
+}
+
+// TestEvaluateKeepsGeneratorWhenSomethingAnswered: the precedence is narrow.
+func TestEvaluateKeepsGeneratorWhenSomethingAnswered(t *testing.T) {
+	m := metrics.Metrics{
+		Iterations: 10, IterationRate: 5,
+		DroppedIterations: 100,
+		StatusClasses:     []metrics.StatusClass{{Class: "2xx", Count: 10, Share: 1}},
+	}
+
+	if verdict, _, _ := Evaluate(noThresholds(), m); verdict != VerdictFailGenerator {
+		t.Errorf("verdict = %q, want %q", verdict, VerdictFailGenerator)
+	}
+}
+
+// TestEvaluateDoesNotInventNoResponse: an ordinary passing run is untouched.
+func TestEvaluateDoesNotInventNoResponse(t *testing.T) {
+	m := metrics.Metrics{
+		Requests: 1000, Iterations: 1000, IterationRate: 100, ErrorRate: 0,
+		HasLatency:    true,
+		Percentiles:   []metrics.Percentile{{P: 95, Val: 10}},
+		StatusClasses: []metrics.StatusClass{{Class: "2xx", Count: 1000, Share: 1}},
+	}
+	if verdict, _, _ := Evaluate(noThresholds(), m); verdict != VerdictPass {
+		t.Errorf("verdict = %q, want %q", verdict, VerdictPass)
+	}
+}

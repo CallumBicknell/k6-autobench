@@ -336,10 +336,10 @@ func endpointRows(m metrics.Metrics) []htmlEndpoint {
 			Requests: commafy(e.Requests),
 			Rate:     commafyFloat(e.RequestRate, 1),
 			Errors:   fmt.Sprintf("%s (%s)", commafy(e.Failed), pct(e.ErrorRate)),
-			Avg:      ms(e.AvgMs),
+			Avg:      endpointAvg(e),
 			P95:      percentileCell(pcts, 95),
 			P99:      percentileCell(pcts, 99),
-			Max:      ms(e.MaxMs),
+			Max:      endpointLatency(e, e.MaxMs),
 		})
 	}
 	return out

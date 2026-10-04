@@ -39,7 +39,15 @@ func (c *Controller) Run(ctx context.Context) (*Outcome, error) {
 		return c.finish(out, low, high), err
 	}
 	if low == 0 {
-		return c.finish(out, low, high), fmt.Errorf(
+		out = c.finish(out, low, high)
+		// A search that never reached the target is a different problem from one
+		// that started too high, and the two call for opposite responses.
+		if out.Unanswered() {
+			return out, fmt.Errorf(
+				"%w: not one probe received an HTTP response; check the target address "+
+					"and that the service is listening", ErrNoResponses)
+		}
+		return out, fmt.Errorf(
 			"%w: start_rate %d already fails; lower search.start_rate",
 			ErrNoPassingRate, c.cfg.StartRate)
 	}

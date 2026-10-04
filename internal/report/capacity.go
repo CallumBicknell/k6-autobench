@@ -176,6 +176,10 @@ func (p *printer) capacityVerdict(out *search.Outcome) {
 	}
 
 	switch {
+	case out.Unanswered():
+		p.line("  " + p.paint(cRed, "The target never answered: not one request received an HTTP response."))
+		p.line("  " + p.paint(cDim, "Check target.base_url, and that the service is listening, before reading"))
+		p.line("  " + p.paint(cDim, "any of the above as capacity."))
 	case out.GeneratorSaturated:
 		p.line("  " + p.paint(cYellow, "The load generator, not the target, was the bottleneck."))
 		p.line("  " + p.paint(cDim, "Raise load_generator.max_vus and search again."))

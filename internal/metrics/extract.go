@@ -81,6 +81,38 @@ type Metrics struct {
 	IterationAvgMs       float64      `json:"iteration_avg_ms"`
 	IterationMaxMs       float64      `json:"iteration_max_ms"`
 	IterationPercentiles []Percentile `json:"iteration_percentiles_ms,omitempty"`
+
+	// Unanswered records that not one request received an HTTP response, so the
+	// run measured nothing about the target. The latency fields are cleared when
+	// it is set: k6 reports 0ms for a request that never got a response, and 0ms
+	// reads as instant, which is the opposite of what happened.
+	Unanswered bool `json:"unanswered,omitempty"`
+}
+
+// StatusClassOther is the class for a response that never carried an HTTP status:
+// a connection refused, a timeout, a name that would not resolve.
+const StatusClassOther = "other"
+
+// unansweredClasses reports whether a response-class split contains no HTTP
+// status at all.
+//
+// It is deliberately narrow. A system answering 500 to everything is failing, and
+// that is a verdict about the system; a system that never answered was not
+// measured, and a pass would claim otherwise. Only a split where every recorded
+// response lacked a status qualifies.
+//
+// An empty split is not unanswered: that means the workload script's counters did
+// not fire, which is a different problem and not one to guess about.
+func unansweredClasses(classes []StatusClass) bool {
+	if len(classes) == 0 {
+		return false
+	}
+	for _, c := range classes {
+		if c.Class != StatusClassOther {
+			return false
+		}
+	}
+	return true
 }
 
 // PercentileAt returns the collected value for percentile p, if present.
@@ -162,7 +194,36 @@ func Extract(s *Summary, percentiles []float64) Metrics {
 	m.HasIterationLatency, m.IterationAvgMs, m.IterationMaxMs, m.IterationPercentiles =
 		extractIterationLatency(s, percentiles)
 
+	// A request that never got a response has no response time. k6 records one
+	// anyway -- zero -- and a zero latency reads as instant, which is the exact
+	// opposite of what happened. The number is dropped rather than reported; the
+	// raw summary in Result.Raw keeps k6's own copy.
+	if unansweredClasses(m.StatusClasses) {
+		m.dropLatency()
+	}
+
 	return m
+}
+
+// dropLatency clears the latency view of a measurement that received no
+// responses, at every level the report can show it.
+func (m *Metrics) dropLatency() {
+	m.Unanswered = true
+
+	m.HasLatency = false
+	m.Percentiles = nil
+	m.AvgMs, m.MinMs, m.MaxMs = 0, 0, 0
+
+	m.HasIterationLatency = false
+	m.IterationPercentiles = nil
+	m.IterationAvgMs, m.IterationMaxMs = 0, 0
+
+	for i := range m.Endpoints {
+		e := &m.Endpoints[i]
+		e.HasLatency = false
+		e.Percentiles = nil
+		e.AvgMs, e.MaxMs = 0, 0
+	}
 }
 
 // statusClassOrder is the reporting order: the classes a healthy run lives in

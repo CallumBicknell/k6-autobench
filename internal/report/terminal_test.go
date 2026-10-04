@@ -208,6 +208,106 @@ func testResult() *results.Result {
 	}
 }
 
+// unansweredResult is a run against a target that never answered, as Extract
+// leaves it: the zero-duration latency samples dropped, the facts that explain
+// them kept.
+func unansweredResult() *results.Result {
+	r := testResult()
+	r.Verdict = results.VerdictFailNoResponse
+	r.Metrics.HasLatency = false
+	r.Metrics.Percentiles = nil
+	r.Metrics.MinMs, r.Metrics.AvgMs, r.Metrics.MaxMs = 0, 0, 0
+	r.Metrics.ErrorRate = 1
+	r.Metrics.FailedRequests = 500
+	r.Metrics.Unanswered = true
+	r.Metrics.StatusClasses = []metrics.StatusClass{
+		{Class: metrics.StatusClassOther, Count: 500, Rate: 100, Share: 1},
+	}
+	r.Metrics.Endpoints = []metrics.Endpoint{{
+		Name: "feed", Requests: 500, Failed: 500, ErrorRate: 1,
+		HasLatency: false, // the latency was dropped with the rest
+	}}
+	return r
+}
+
+// zeroLatencies returns the report's lines that show a latency of zero.
+//
+// It ignores the elapsed-time footer, which is a duration and not a latency:
+// "ran 5000.0ms" contains the string a naive check would trip on, which is how
+// this assertion first failed against correct output.
+func zeroLatencies(report string) []string {
+	var out []string
+	for _, line := range strings.Split(report, "\n") {
+		if strings.Contains(line, "ran ") {
+			continue
+		}
+		if strings.Contains(line, "0.0ms") {
+			out = append(out, strings.TrimSpace(line))
+		}
+	}
+	return out
+}
+
+// TestRenderNoResponseSaysWhatHappened is the regression test for a misleading
+// report: a target that never answered used to print "0.0ms" for every
+// percentile, which reads as instant.
+func TestRenderNoResponseSaysWhatHappened(t *testing.T) {
+	got := render(t, unansweredResult(), false)
+
+	if !strings.Contains(got, "FAIL_NO_RESPONSE") {
+		t.Errorf("report does not carry the verdict:\n%s", got)
+	}
+	if !strings.Contains(got, "no responses were received") {
+		t.Errorf("report does not say why there is no latency:\n%s", got)
+	}
+	if zeros := zeroLatencies(got); len(zeros) > 0 {
+		t.Errorf("report shows a zero latency for a target that never answered: %v", zeros)
+	}
+	// The facts that explain it survive.
+	if !strings.Contains(got, "100.000%") {
+		t.Errorf("report lost the error rate:\n%s", got)
+	}
+	if !strings.Contains(got, "transport-level failures") {
+		t.Errorf("report lost the response-class hint:\n%s", got)
+	}
+}
+
+// TestRenderNoResponseDashesTheEndpointLatency: the per-request row is the other
+// place a zero would appear.
+func TestRenderNoResponseDashesTheEndpointLatency(t *testing.T) {
+	got := render(t, unansweredResult(), false)
+
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.Contains(line, "feed") {
+			continue
+		}
+		if strings.Contains(line, "0.0ms") {
+			t.Errorf("endpoint row shows a zero latency: %q", line)
+		}
+		if !strings.Contains(line, "  -  ") {
+			t.Errorf("endpoint row should dash its latency columns: %q", line)
+		}
+		return
+	}
+	t.Errorf("report has no endpoint row:\n%s", got)
+}
+
+// TestRenderNoResponseHTML covers the same two things in the HTML report.
+func TestRenderNoResponseHTML(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, testConfig(), unansweredResult(), "1.0.0"); err != nil {
+		t.Fatalf("RenderHTML: %v", err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, "FAIL_NO_RESPONSE") {
+		t.Error("html report does not carry the verdict")
+	}
+	if zeros := zeroLatencies(got); len(zeros) > 0 {
+		t.Errorf("html report shows a zero latency: %v", zeros)
+	}
+}
+
 func render(t *testing.T, r *results.Result, color bool) string {
 	t.Helper()
 	var buf bytes.Buffer

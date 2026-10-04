@@ -38,6 +38,15 @@ const maxSaneRate = 10_000_000
 // has no passing rate to bracket against. The user should lower start_rate.
 var ErrNoPassingRate = errors.New("no passing rate found")
 
+// ErrNoResponses reports that the search never reached the target: not one probe
+// received an HTTP response.
+//
+// It is kept apart from ErrNoPassingRate because the two call for opposite
+// responses. A start rate that is too high means "lower search.start_rate"; a
+// target that never answered means there is nothing there to measure, and
+// lowering the rate would only make the benchmark quieter about it.
+var ErrNoResponses = errors.New("the target never answered")
+
 // ErrGeneratorSaturated reports that the load generator could not sustain the
 // requested rate. Per PLAN-OUTLINE.md §17 such a probe must be discarded, never
 // read as a capacity limit, because the benchmark itself became the bottleneck.
@@ -154,11 +163,35 @@ func (o *Outcome) Verdict() results.Verdict {
 		return o.Validation.Result.Verdict
 	case o.GeneratorSaturated:
 		return results.VerdictFailGenerator
+	case o.Unanswered():
+		return results.VerdictFailNoResponse
 	case o.PassingRate > 0:
 		return results.VerdictPass
 	default:
 		return results.VerdictFailNoCapacity
 	}
+}
+
+// Unanswered reports whether the search measured nothing: not one probe received
+// an HTTP response.
+//
+// It is the search-level form of Metrics.Unanswered, and it separates two answers
+// that otherwise look identical -- a capacity of zero. "This system has no
+// capacity at the rate we started from" and "this system was never reached" call
+// for opposite responses, and only the second means the benchmark is misaimed.
+//
+// It requires every probe to be unanswered. One probe that got a response means
+// something was measured, and the ordinary logic is the right judge of it.
+func (o *Outcome) Unanswered() bool {
+	if len(o.Probes) == 0 {
+		return false
+	}
+	for _, p := range o.Probes {
+		if !p.Result.Metrics.Unanswered {
+			return false
+		}
+	}
+	return true
 }
 
 // Pass reports whether the search produced a usable, passing capacity estimate.

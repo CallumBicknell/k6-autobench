@@ -182,7 +182,9 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 
 	switch {
 	case runErr == nil:
-	case errors.Is(runErr, search.ErrNoPassingRate), errors.Is(runErr, search.ErrGeneratorSaturated):
+	case errors.Is(runErr, search.ErrNoPassingRate),
+		errors.Is(runErr, search.ErrNoResponses),
+		errors.Is(runErr, search.ErrGeneratorSaturated):
 		// A search outcome rather than a crash: report it and fail the gate.
 		fmt.Fprintln(os.Stderr, "autobench: "+runErr.Error())
 	case ctx.Err() != nil:

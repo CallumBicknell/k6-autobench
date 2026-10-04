@@ -104,6 +104,10 @@ func (p *printer) traffic(r *results.Result) {
 
 func (p *printer) latency(r *results.Result) {
 	m := r.Metrics
+	if m.Unanswered {
+		p.kv("Latency", p.paint(cYellow, "no responses were received"))
+		return
+	}
 	if !m.HasLatency {
 		p.kv("Latency", p.paint(cYellow, "no http_req_duration samples"))
 		return
@@ -269,11 +273,24 @@ func (p *printer) endpoints(m metrics.Metrics) {
 			truncate(e.Name, 18),
 			commafy(e.Requests),
 			errors,
-			ms(e.AvgMs),
+			endpointAvg(e),
 			endpointPercentile(e, 95),
 			endpointPercentile(e, 99),
 		))
 	}
+}
+
+// endpointAvg renders an endpoint's mean latency, or "-" when it has none.
+func endpointAvg(e metrics.Endpoint) string { return endpointLatency(e, e.AvgMs) }
+
+// endpointLatency renders one endpoint latency, or "-" when the endpoint has
+// none. A measurement that received no responses has no latency to show, and a
+// zero would read as instant.
+func endpointLatency(e metrics.Endpoint, v float64) string {
+	if !e.HasLatency {
+		return "-"
+	}
+	return ms(v)
 }
 
 // endpointPercentile renders one endpoint percentile, or "-" when the config

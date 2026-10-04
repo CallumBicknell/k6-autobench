@@ -1047,6 +1047,27 @@ maxVUs reached.
 Probe discarded.
 ```
 
+**Implemented**, along with the sibling case this section does not name. A probe
+that never reached the target rate is discarded because it says nothing about the
+target; a run where *not one request received an HTTP response* is the same kind
+of statement, and was added in V1.0 as `FAIL_NO_RESPONSE`.
+
+It came from a real failure: with no error threshold configured, a capacity search
+against a dead address grew to `max_probes` and reported `Capacity ≥ 1,600/s`,
+`RESULT: PASS`, exit 0 -- while printing that 100% of responses had no HTTP
+status and showing `p95 0.0ms` for a target that never answered. Two things were
+wrong. A pass claimed a measurement that had not happened, which is a false green
+in a pipeline. And `0ms` reads as instant, which is the opposite of the truth:
+k6 records a duration of zero for a request that never got a response, and the
+report now drops those samples rather than passing them on.
+
+It outranks generator saturation, because a target that hangs produces both and
+the cause is the more useful answer: telling someone to raise `max_vus` when
+their service is not answering sends them the wrong way. The two diagnoses are
+kept apart at the search level too -- `ErrNoResponses` rather than
+`ErrNoPassingRate`, since "lower your start rate" is the wrong advice for a
+target that was never reached.
+
 ---
 
 # 18. Automatically calculate VUs

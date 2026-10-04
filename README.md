@@ -64,9 +64,22 @@ found, the generator saturated, or a regression was found · `2` usage/runtime
 error.
 
 Verdicts: `PASS`, `FAIL_LATENCY`, `FAIL_ERRORS`, `FAIL_GENERATOR`,
-`FAIL_NO_CAPACITY`, `FAIL_REGRESSION`. A saturated generator outranks threshold
-breaches, because a probe that never reached the target rate says nothing about
-the system under test.
+`FAIL_NO_CAPACITY`, `FAIL_NO_RESPONSE`, `FAIL_REGRESSION`. A saturated generator
+outranks threshold breaches, because a probe that never reached the target rate
+says nothing about the system under test.
+
+`FAIL_NO_RESPONSE` outranks everything, including saturation. It means not one
+request received an HTTP response: the benchmark never reached the target. That is
+not a verdict about the system, and reporting it as a pass would claim a
+measurement that did not happen — which is how a benchmark pointed at a dead
+service used to go green. The report drops the latency columns rather than print
+`0.0ms`, which would read as instant.
+
+**A run with no thresholds configured checks nothing.** autobench does not invent
+an SLO, so if you do not say what passing means, nothing can breach and the
+verdict is `PASS` — except for `FAIL_NO_RESPONSE` and `FAIL_GENERATOR`, which are
+statements about whether the measurement happened at all rather than judgements
+about the system. Set at least `thresholds.error_rate`.
 
 ### Flags
 

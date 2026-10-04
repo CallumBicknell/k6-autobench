@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,118 @@ func mustSummary(t *testing.T, raw string) *Summary {
 		t.Fatalf("unmarshal summary: %v", err)
 	}
 	return &s
+}
+
+// transportFailureSummary is a k6 summary from a target that never answered: every
+// request failed at the transport layer, and k6 still recorded a duration of zero
+// for each one.
+const transportFailureSummary = `{
+  "metrics": {
+    "http_req_duration": {"type": "trend", "values": {"avg": 0, "min": 0, "max": 0,
+      "p(50)": 0, "p(95)": 0, "p(99)": 0}},
+    "iteration_duration": {"type": "trend", "values": {"avg": 0, "min": 0, "max": 0,
+      "p(50)": 0, "p(95)": 0, "p(99)": 0}},
+    "http_reqs": {"type": "counter", "values": {"count": 41, "rate": 20.5}},
+    "iterations": {"type": "counter", "values": {"count": 41, "rate": 20.5}},
+    "http_req_failed": {"type": "rate", "values": {"rate": 1, "passes": 41, "fails": 0}},
+    "vus": {"type": "gauge", "values": {"value": 1, "min": 1, "max": 1}},
+    "vus_max": {"type": "gauge", "values": {"value": 10, "min": 10, "max": 10}},
+    "http_req_duration{name:root}": {"type": "trend", "values": {"avg": 0, "min": 0, "max": 0,
+      "p(95)": 0, "p(99)": 0}},
+    "http_reqs{name:root}": {"type": "counter", "values": {"count": 41, "rate": 20.5}},
+    "http_req_failed{name:root}": {"type": "rate", "values": {"rate": 1, "passes": 41, "fails": 0}},
+    "ab_status_other": {"type": "counter", "values": {"count": 41, "rate": 20.5}}
+  },
+  "state": {"testRunDurationMs": 2000}
+}`
+
+// TestExtractDropsLatencyWhenNothingAnswered is the regression test for a
+// misleading number: k6 records a duration of zero for a request that never got a
+// response, and a zero latency reads as instant, which is the opposite of what
+// happened. The number is dropped rather than reported.
+func TestExtractDropsLatencyWhenNothingAnswered(t *testing.T) {
+	m := Extract(mustSummary(t, transportFailureSummary), []float64{95, 99})
+
+	if !m.Unanswered {
+		t.Fatal("Unanswered = false, want true for a measurement with no HTTP status")
+	}
+	if m.HasLatency {
+		t.Error("HasLatency = true, want the zero-duration samples dropped")
+	}
+	if len(m.Percentiles) != 0 || m.AvgMs != 0 || m.MaxMs != 0 {
+		t.Errorf("latency survived: pcts=%v avg=%v max=%v", m.Percentiles, m.AvgMs, m.MaxMs)
+	}
+	if m.HasIterationLatency || len(m.IterationPercentiles) != 0 {
+		t.Error("iteration latency survived, want it dropped too")
+	}
+	for _, e := range m.Endpoints {
+		if e.HasLatency || len(e.Percentiles) != 0 {
+			t.Errorf("endpoint %s kept its latency: %+v", e.Name, e)
+		}
+	}
+
+	// The facts that explain it are kept: this is a reporting change, not a
+	// forgetting of what happened.
+	if m.Requests != 41 || m.FailedRequests != 41 || m.ErrorRate != 1 {
+		t.Errorf("requests=%d failed=%d errorRate=%v, want 41/41/1",
+			m.Requests, m.FailedRequests, m.ErrorRate)
+	}
+	if len(m.StatusClasses) != 1 || m.StatusClasses[0].Class != StatusClassOther {
+		t.Errorf("status classes = %+v, want the transport-failure class kept", m.StatusClasses)
+	}
+}
+
+// TestExtractKeepsLatencyWhenAnythingAnswered: one real response is enough to make
+// the measurement a measurement.
+func TestExtractKeepsLatencyWhenAnythingAnswered(t *testing.T) {
+	answered := strings.Replace(transportFailureSummary,
+		`"ab_status_other": {"type": "counter", "values": {"count": 41, "rate": 20.5}}`,
+		`"ab_status_2xx": {"type": "counter", "values": {"count": 1, "rate": 0.5}},
+    "ab_status_other": {"type": "counter", "values": {"count": 40, "rate": 20}}`, 1)
+
+	m := Extract(mustSummary(t, answered), []float64{95, 99})
+	if m.Unanswered {
+		t.Error("Unanswered = true, want false when one response had a status")
+	}
+	if !m.HasLatency {
+		t.Error("HasLatency = false, want the samples kept")
+	}
+}
+
+// TestExtractDoesNotCallAnEmptyClassListUnanswered: no recorded classes means the
+// workload script's counters did not fire, which is a different problem and not
+// one to guess about.
+func TestExtractDoesNotCallAnEmptyClassListUnanswered(t *testing.T) {
+	noClasses := `{
+      "metrics": {"http_reqs": {"type": "counter", "values": {"count": 5, "rate": 1}}},
+      "state": {"testRunDurationMs": 5000}
+    }`
+	if m := Extract(mustSummary(t, noClasses), []float64{95}); m.Unanswered {
+		t.Error("Unanswered = true, want false when no classes were recorded at all")
+	}
+}
+
+// TestUnansweredClasses is the predicate on its own.
+func TestUnansweredClasses(t *testing.T) {
+	tests := []struct {
+		name    string
+		classes []StatusClass
+		want    bool
+	}{
+		{"nothing recorded", nil, false},
+		{"only transport failures", []StatusClass{{Class: StatusClassOther, Count: 10}}, true},
+		{"one answer among many failures", []StatusClass{
+			{Class: "2xx", Count: 1}, {Class: StatusClassOther, Count: 99}}, false},
+		{"a 5xx storm is not unanswered", []StatusClass{{Class: "5xx", Count: 10}}, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unansweredClasses(tc.classes); got != tc.want {
+				t.Errorf("unansweredClasses(%+v) = %v, want %v", tc.classes, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestExtractHappyPath(t *testing.T) {

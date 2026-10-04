@@ -30,6 +30,13 @@ func Evaluate(cfg *config.Config, m metrics.Metrics) (Verdict, []Failure, *Gener
 
 	var verdict Verdict
 	switch {
+	// No response at all outranks everything, including generator saturation. A
+	// target that hangs produces both -- slow requests pile up VUs until k6 drops
+	// iterations -- and the honest answer is the cause, not the symptom. Telling
+	// someone to raise max_vus when their service is not answering sends them the
+	// wrong way.
+	case m.Unanswered:
+		verdict = VerdictFailNoResponse
 	case gen != nil:
 		verdict = VerdictFailGenerator
 	case len(failures) == 0:
