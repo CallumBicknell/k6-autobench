@@ -275,7 +275,7 @@ func TestPrometheusRecordsTheConfiguredUnitAndQuery(t *testing.T) {
 
 	report := measure(t, p, func() {})
 	s := seriesNamed(t, report, "connections")
-	if s.Source != "postgres" || s.Unit != "connections" || s.Query != "pg_stat_activity_count" {
+	if s.Source != "postgres" || s.Unit != "connections" || s.Origin != "pg_stat_activity_count" {
 		t.Errorf("series = %+v, want the configured source, unit and query", s)
 	}
 	if s.Label() != "postgres connections" {

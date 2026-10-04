@@ -32,12 +32,6 @@ const maxResponseBytes = 4 << 20
 // expression is wrong, and silently reporting nothing would hide that.
 var errNoSeries = errors.New("matched no series")
 
-// stopGrace bounds how long stopping waits for a poll that is already in
-// flight. The reading it is about to produce is the last one of the
-// measurement, so it is worth a moment; but a wedged monitoring endpoint must
-// not hold the report hostage either.
-const stopGrace = time.Second
-
 // Query is one PromQL instant query sampled on the collector interval.
 type Query struct {
 	// Name identifies the series in the report, e.g. "cpu".
@@ -76,96 +70,74 @@ var _ Collector = (*Prometheus)(nil)
 func (p *Prometheus) Name() string { return p.Source }
 
 // Start begins sampling in the background and returns the function that stops
-// it. It returns immediately: sampling must never delay the measurement.
-//
-// The returned function must be called exactly once, or the sampling goroutine
-// leaks.
+// it and reports what was seen.
 func (p *Prometheus) Start(ctx context.Context) func() Report {
-	ctx, cancel := context.WithCancel(ctx)
-	stop := make(chan struct{})
-	acc := newAccumulator(p.Source, time.Now())
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		p.loop(ctx, stop, acc)
-	}()
-
-	return func() Report {
-		// Ask the loop to stop rather than cancelling outright: a poll already
-		// in flight is the last reading of the measurement, and dropping it
-		// would leave a measurement shorter than the interval with no data at
-		// all.
-		close(stop)
-		select {
-		case <-done:
-		case <-time.After(stopGrace):
-			// The endpoint is wedged; give up on the reading and abort the
-			// request so stopping cannot hang the report.
-			cancel()
-			<-done
-		}
-		cancel()
-		return acc.report()
-	}
+	return sample(ctx, p.Source, p.interval(), &promPoller{
+		client:  p.client(),
+		url:     p.URL,
+		timeout: p.timeout(),
+		queries: p.Queries,
+	})
 }
 
-// loop samples immediately and then on every tick. The first sample is not left
-// to the ticker: a measurement shorter than the interval would otherwise
-// collect nothing at all.
-func (p *Prometheus) loop(ctx context.Context, stop <-chan struct{}, acc *accumulator) {
-	client := p.client()
-	p.poll(ctx, client, acc)
-
-	ticker := time.NewTicker(p.interval())
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-stop:
-			return
-		case <-ticker.C:
-			p.poll(ctx, client, acc)
-		}
-	}
+// promPoller reads one Prometheus source. It is the adapter between the
+// Prometheus API and the sampling loop, which knows nothing about either.
+type promPoller struct {
+	client  *http.Client
+	url     string
+	timeout time.Duration
+	queries []Query
 }
 
-// poll samples every query once. The queries are issued concurrently, because a
-// wide query set would otherwise take long enough to skew the readings against
-// each other, but their results are recorded in configured order so the report
-// is stable between runs.
-func (p *Prometheus) poll(ctx context.Context, client *http.Client, acc *accumulator) {
-	results := make([][]reading, len(p.Queries))
-	errs := make([]error, len(p.Queries))
+// poll issues every query once and collects what came back.
+//
+// The queries are issued concurrently, because a wide query set would otherwise
+// take long enough to skew the readings against each other. The results are
+// returned in configured order regardless, so the report is stable between runs.
+func (pp *promPoller) poll(ctx context.Context) ([]reading, []pollFailure) {
+	results := make([][]vectorEntry, len(pp.queries))
+	errs := make([]error, len(pp.queries))
 
 	var wg sync.WaitGroup
-	for i, q := range p.Queries {
+	for i, q := range pp.queries {
 		wg.Add(1)
 		go func(i int, q Query) {
 			defer wg.Done()
-			results[i], errs[i] = p.query(ctx, client, q)
+			results[i], errs[i] = pp.query(ctx, q)
 		}(i, q)
 	}
 	wg.Wait()
 
-	offset := time.Since(acc.start)
-	for i, q := range p.Queries {
+	var (
+		readings []reading
+		failures []pollFailure
+	)
+	for i, q := range pp.queries {
 		switch {
 		case errs[i] != nil:
-			acc.fail(q.Name, errs[i])
+			failures = append(failures, pollFailure{key: q.Name, err: errs[i]})
 		case len(results[i]) == 0:
-			acc.fail(q.Name, errNoSeries)
+			// An empty vector is a success to Prometheus and almost always a
+			// mistake in the expression, so it is reported rather than dropped.
+			failures = append(failures, pollFailure{key: q.Name, err: errNoSeries})
 		default:
-			for n, r := range results[i] {
-				acc.add(q, i, seriesName(q, r.labels, n, len(results[i])), r.value, offset)
+			for n, e := range results[i] {
+				readings = append(readings, reading{
+					order:  i,
+					key:    q.Name,
+					name:   seriesName(q, e.labels, n, len(results[i])),
+					unit:   q.Unit,
+					origin: q.Expr,
+					value:  e.value,
+				})
 			}
 		}
 	}
+	return readings, failures
 }
 
-// reading is one series returned by a query.
-type reading struct {
+// vectorEntry is one series returned by a query.
+type vectorEntry struct {
 	labels map[string]string
 	value  float64
 }
@@ -208,20 +180,20 @@ func labelList(labels map[string]string) string {
 }
 
 // query issues one instant query and returns the series it matched.
-func (p *Prometheus) query(ctx context.Context, client *http.Client, q Query) ([]reading, error) {
-	endpoint, err := p.endpoint(q.Expr)
+func (pp *promPoller) query(ctx context.Context, q Query) ([]vectorEntry, error) {
+	endpoint, err := promEndpoint(pp.url, q.Expr)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, p.timeout())
+	ctx, cancel := context.WithTimeout(ctx, pp.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := pp.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -246,17 +218,17 @@ func (p *Prometheus) query(ctx context.Context, client *http.Client, q Query) ([
 		}
 		return nil, fmt.Errorf("prometheus error: %s", msg)
 	}
-	return env.readings()
+	return env.entries()
 }
 
-// endpoint builds the instant-query URL for an expression.
-func (p *Prometheus) endpoint(expr string) (string, error) {
-	u, err := url.Parse(p.URL)
+// promEndpoint builds the instant-query URL for an expression.
+func promEndpoint(base, expr string) (string, error) {
+	u, err := url.Parse(base)
 	if err != nil {
-		return "", fmt.Errorf("invalid url %q: %w", p.URL, err)
+		return "", fmt.Errorf("invalid url %q: %w", base, err)
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("invalid url %q: needs a scheme and host", p.URL)
+		return "", fmt.Errorf("invalid url %q: needs a scheme and host", base)
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/") + "/api/v1/query"
 	q := url.Values{}
@@ -297,9 +269,9 @@ type promEnvelope struct {
 	} `json:"data"`
 }
 
-// readings decodes the result. An instant query returns a vector or a scalar;
+// entries decodes the result. An instant query returns a vector or a scalar;
 // anything else is rejected rather than half-read.
-func (e promEnvelope) readings() ([]reading, error) {
+func (e promEnvelope) entries() ([]vectorEntry, error) {
 	switch e.Data.ResultType {
 	case "vector":
 		var v []struct {
@@ -309,9 +281,9 @@ func (e promEnvelope) readings() ([]reading, error) {
 		if err := json.Unmarshal(e.Data.Result, &v); err != nil {
 			return nil, fmt.Errorf("decode vector: %w", err)
 		}
-		out := make([]reading, 0, len(v))
+		out := make([]vectorEntry, 0, len(v))
 		for _, s := range v {
-			out = append(out, reading{labels: s.Metric, value: s.Value.Value})
+			out = append(out, vectorEntry{labels: s.Metric, value: s.Value.Value})
 		}
 		return out, nil
 	case "scalar":
@@ -319,7 +291,7 @@ func (e promEnvelope) readings() ([]reading, error) {
 		if err := json.Unmarshal(e.Data.Result, &pair); err != nil {
 			return nil, fmt.Errorf("decode scalar: %w", err)
 		}
-		return []reading{{value: pair.Value}}, nil
+		return []vectorEntry{{value: pair.Value}}, nil
 	case "string":
 		return nil, errors.New("query returned a string, not a number")
 	case "":
@@ -381,87 +353,4 @@ func firstLine(b []byte) string {
 		s = s[:max] + "…"
 	}
 	return s
-}
-
-// accumulator gathers one measurement's readings. Only the sampling goroutine
-// writes to it, and the report is read after that goroutine has stopped, so it
-// needs no lock.
-type accumulator struct {
-	source string
-	start  time.Time
-
-	// byName indexes series by their report name, so a later poll extends the
-	// series an earlier one created rather than starting a second row.
-	byName map[string]int
-	series []Series
-	// order is the configured query index behind each series, which keeps the
-	// report in the order the queries were written rather than an arbitrary one.
-	order []int
-
-	failures []Failure
-	failed   map[string]bool
-}
-
-func newAccumulator(source string, start time.Time) *accumulator {
-	return &accumulator{
-		source: source,
-		start:  start,
-		byName: map[string]int{},
-		failed: map[string]bool{},
-	}
-}
-
-func (a *accumulator) add(q Query, order int, name string, value float64, offset time.Duration) {
-	i, ok := a.byName[name]
-	if !ok {
-		i = len(a.series)
-		a.byName[name] = i
-		a.series = append(a.series, Series{
-			Source: a.source,
-			Name:   name,
-			Unit:   q.Unit,
-			Query:  q.Expr,
-		})
-		a.order = append(a.order, order)
-	}
-	a.series[i].Samples = append(a.series[i].Samples, Sample{
-		OffsetMs: float64(offset) / float64(time.Millisecond),
-		Value:    value,
-	})
-}
-
-// fail records a collector problem once per query. A persistently unreachable
-// endpoint would otherwise add one line per poll.
-func (a *accumulator) fail(query string, err error) {
-	if a.failed[query] {
-		return
-	}
-	a.failed[query] = true
-	a.failures = append(a.failures, Failure{
-		Source: a.source,
-		Error:  query + ": " + err.Error(),
-	})
-}
-
-// report returns what was collected, with the series in configured order.
-func (a *accumulator) report() Report {
-	idx := make([]int, len(a.series))
-	for i := range idx {
-		idx[i] = i
-	}
-	sort.SliceStable(idx, func(x, y int) bool {
-		if a.order[idx[x]] != a.order[idx[y]] {
-			return a.order[idx[x]] < a.order[idx[y]]
-		}
-		return a.series[idx[x]].Name < a.series[idx[y]].Name
-	})
-
-	out := Report{
-		Series:   make([]Series, 0, len(a.series)),
-		Failures: a.failures,
-	}
-	for _, i := range idx {
-		out.Series = append(out.Series, a.series[i])
-	}
-	return out
 }

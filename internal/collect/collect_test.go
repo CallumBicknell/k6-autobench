@@ -172,13 +172,10 @@ func TestPromPairRejectsMalformedValues(t *testing.T) {
 // TestPrometheusRejectsAnInvalidURL makes sure a bad URL is a configuration
 // mistake, not something discovered mid-run.
 func TestPrometheusRejectsAnInvalidURL(t *testing.T) {
-	p := &Prometheus{Source: "api", URL: "not a url at all"}
-	if _, err := p.endpoint("up"); err == nil {
-		t.Error("endpoint should reject a URL with no scheme and host")
+	if _, err := promEndpoint("not a url at all", "up"); err == nil {
+		t.Error("promEndpoint should reject a URL with no scheme and host")
 	}
-
-	p = &Prometheus{Source: "api", URL: "localhost:9090"}
-	if _, err := p.endpoint("up"); err == nil {
-		t.Error("endpoint should reject a URL with no scheme")
+	if _, err := promEndpoint("localhost:9090", "up"); err == nil {
+		t.Error("promEndpoint should reject a URL with no scheme")
 	}
 }

@@ -39,9 +39,9 @@ type Series struct {
 	// binary units and "percent" with a percent sign; anything else is appended
 	// to the number as written.
 	Unit string `json:"unit,omitempty"`
-	// Query is the expression that produced the series, kept so a report can be
-	// reproduced by hand against the same Prometheus.
-	Query   string   `json:"query,omitempty"`
+	// Origin is the expression or endpoint the series came from, kept so a
+	// report can be reproduced by hand against the same source.
+	Origin  string   `json:"origin,omitempty"`
 	Samples []Sample `json:"samples"`
 }
 
