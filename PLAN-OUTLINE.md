@@ -18,13 +18,15 @@
 >   reading of what the mix implies.
 > - **V0.7 — done.** Per-endpoint windows: each window carries the request
 >   breakdown, so a spike is attributed to the request that caused it.
-> - **V0.8 — done.** Resource collectors (the first half of §33): a Prometheus
->   collector behind a `collectors:` block, sampling the system under test while
->   it is loaded, with the readings reported alongside the latency they caused and
->   the resources that moved with it ranked. (`internal/collect`.)
+> - **V0.8 — done.** Resource collectors (§33): a Prometheus collector behind a
+>   `collectors:` block, sampling the system under test while it is loaded, with
+>   the readings reported alongside the latency they caused and the resources
+>   that moved with it ranked. (`internal/collect`.)
+> - **V0.9 — done.** The rest of §33: Docker, system and Kubernetes collectors on
+>   the same abstraction, and the host's own CPU, memory and load — which is
+>   generator CPU/memory from §30 as well. (`internal/collect`.)
 >
-> Still open: the remaining collectors of §33 — Docker, Kubernetes, system — on
-> the abstraction V0.8 put in place, and generator CPU/memory from §30.
+> Still open: nothing from the outline's collector list.
 >
 > Deviations worth knowing, and why:
 >
@@ -1668,11 +1670,12 @@ autobench compare run1 run2
 
 # 30. Metrics I'd collect
 
-**Mostly implemented.** Traffic, latency percentiles, generator state, the
-per-endpoint breakdown and the error breakdown by status class all land in the
-report, and §9's "everything above per endpoint" now extends to the windowed view
-(V0.7). Not collected: generator CPU and memory, which would need to observe the
-host rather than k6.
+**Implemented.** Traffic, latency percentiles, generator state, the per-endpoint
+breakdown and the error breakdown by status class all land in the report, and
+§9's "everything above per endpoint" extends to the windowed view (V0.7).
+Generator CPU and memory arrived in V0.9 as the `system` collector, which reads
+the host autobench itself runs on: CPU, memory and load. It is the one collector
+whose subject is the *generator* rather than the target, and the report says so.
 
 At minimum:
 
@@ -1886,28 +1889,63 @@ exports is reachable through it.
 ```text
 internal/collect/
 ├── collect.go      Series, Sample, Report, Collector
-└── prometheus.go   instant-query polling on an interval
+├── sampler.go      the polling loop every collector shares
+├── prometheus.go   instant-query polling on an interval
+├── docker.go       the daemon's own stats endpoint
+├── system.go       the Linux kernel's counters
+└── kubernetes.go   the metrics API `kubectl top` reads
 ```
 
 `Collector` is deliberately narrow — `Start(ctx)` returns a `stop()` that reports
-— so the rest of the outline's list can be added without touching the runner, the
+— and V0.9 filled in the rest of the list above without touching the runner, the
 result model or the renderers:
 
-- **Start must not block.** A slow or unreachable monitoring endpoint must never
-  delay the measurement. Stopping waits briefly for a poll already in flight,
-  because that reading is the last one of the measurement.
+- **Start must not block.** A slow or unreachable endpoint must never delay the
+  measurement. Stopping waits briefly for a poll already in flight, because that
+  reading is the last one of the measurement.
 - **Failures are advisory.** A target's monitoring being unreachable says nothing
   about its capacity, so a collector reports what it could not read and the run
   carries on. Static mistakes (a URL with no host, a duplicate name) are caught at
   configuration time instead.
 - **Readings are relative to the measurement.** Each sample carries an offset from
   the start, on the same timeline the window labels use, so a resource peak can be
-  read against the latency window it landed in. The Prometheus server's own
-  timestamp is ignored on purpose: a clock skew would otherwise shift every
-  reading.
+  read against the latency window it landed in. A remote server's own timestamp is
+  ignored on purpose: a clock skew would otherwise shift every reading.
 
 The report gained a `SYSTEM` section showing min, max, average and the peak
 offset per series, in both the terminal and the HTML report.
+
+## What V0.9 added
+
+The other three kinds, and the shared machinery that made them cheap to add.
+
+The three collectors each needed the same loop: read immediately so a measurement
+shorter than the interval still collects something, then on every tick; stop
+without discarding a reading already in flight; accumulate into one report in
+configured order; report a broken series once rather than once per poll. That is
+now one `sampler` driven by a small `poller` interface, and each collector is only
+the part that knows how to read its own system.
+
+Two of them are worth saying something about, because the obvious implementation
+of each is wrong:
+
+- **Docker** CPU is `(cpu_delta / system_cpu_delta) * online_cpus * 100`, the
+  daemon's own documented formula, which is why the request says `stream=false`:
+  that is what makes the daemon include the previous counters the delta needs.
+  Memory is usage minus the reclaimable page cache, which is what the `docker` CLI
+  shows — the kernel counts that cache as usage and the container does not really
+  hold it.
+- **Kubernetes** returns its quantities as strings with suffixes: `12345678n` is
+  0.012345678 cores. There is a parser for the documented suffix set, and an
+  unknown suffix is an error rather than a guess, because reading `5Z` as 5 would
+  report a number that is not there.
+
+`system` is the one to be careful about. It reads `/proc` on the host autobench
+runs on, so it is measuring the **load generator**, not the target. If the system
+under test is elsewhere the readings say nothing about it; if it is on the same
+machine the two cannot be separated. What it is unambiguously good for is the
+question a saturation verdict raises — was the generator, rather than the target,
+the thing that ran out? That is §30, and this covers it.
 
 ## What V0.8 added to it
 

@@ -39,17 +39,19 @@ thresholds:
 analysis:
   window: 10s
 
-# Resource collectors sample the system under test's own metrics while it is
-# loaded, so the report can say what the system was doing when it ran out of
-# capacity rather than only how slow it got.
+# Resource collectors sample a system's own metrics while it is loaded, so the
+# report can say what the system was doing when it ran out of capacity rather than
+# only how slow it got. Four kinds are available; use whichever the target
+# supports, or several at once.
 #
-# A collector is advisory: if Prometheus is unreachable, or a query has a typo,
-# the report says so and the run carries on. The verdict is never affected.
+# A collector is advisory: if a source is unreachable, or a query has a typo, the
+# report says so and the run carries on. The verdict is never affected.
 collectors:
   interval: 5s
 
+  # Whatever the target already exports, through PromQL. Covers the most ground
+  # when there is monitoring in place.
   prometheus:
-    # The API itself. One source per system keeps the report rows readable.
     - name: api
       url: http://localhost:9090
       queries:
@@ -62,19 +64,30 @@ collectors:
         - name: goroutines
           query: go_goroutines{job="api"}
 
-    # The database behind it. This is the half k6 cannot see: a client-side p99
-    # spike looks the same whether the API or the database caused it.
+  # For a target with no monitoring installed at all: everything Docker runs
+  # already exports CPU and memory, and reaching it needs only the socket.
+  docker:
     - name: postgres
-      url: http://localhost:9090
-      queries:
-        - name: connections
-          query: pg_stat_activity_count{job="postgres"}
-        - name: cpu
-          query: 100 * (1 - rate(node_cpu_seconds_total{job="postgres",mode="idle"}[1m]))
-          unit: percent
-        - name: memory
-          query: process_resident_memory_bytes{job="postgres"}
-          unit: bytes
+      container: my-postgres
+      # socket: /var/run/docker.sock   # defaults to $DOCKER_HOST, then this
+
+  # The host autobench itself runs on -- the *load generator*, not the target.
+  # Its CPU, memory and load answer the question a saturation verdict raises:
+  # was the generator, rather than the target, the thing that ran out?
+  system:
+    - name: generator
+
+  # For a cluster with no Prometheus: the metrics API is what `kubectl top`
+  # reads. Usage is summed across the selected pods.
+  # kubernetes:
+  #   - name: cluster-api
+  #     url: https://127.0.0.1:6443
+  #     # token: ""                   # defaults to $AUTOBENCH_K8S_TOKEN, then a
+  #     #                             # mounted service account token
+  #     namespace: default
+  #     selector: app=api
+  #     insecure: true                # or ca_file: /path/to/ca.pem, not both
 
 # `autobench run examples/collectors.yaml` prints the SYSTEM table after the
-# windowed view. Add `--html report.html` for the same thing in the report.
+# windowed view, and a LIKELY CORRELATED table naming the resources that moved
+# with the latency. Add `--html report.html` for the same in the report.

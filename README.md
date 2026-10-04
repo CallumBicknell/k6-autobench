@@ -10,9 +10,10 @@ arrival-rate generator.
 > **Status: V0.9** — `autobench run` (fixed rate) and `autobench capacity`
 > (adaptive search) over weighted request pools or multi-step journeys, with
 > per-endpoint and response-class breakdowns, windowed latency analysis that
-> attributes a spike to the request that caused it, resource collectors that
-> sample the system under test while it is loaded, JSON and a self-contained
-> HTML report. See `PLAN-OUTLINE.md`.
+> attributes a spike to the request that caused it, resource collectors
+> (Prometheus, Docker, system, Kubernetes) that sample a system while it is
+> loaded and rank what moved with the latency, JSON and a self-contained HTML
+> report. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -335,76 +336,120 @@ Everything above is the view from the client: how slow the response was, how
 many failed. It cannot say *why*. k6 does not know that the database was out of
 connections when the request arrived.
 
-Collectors sample the system under test's own metrics while it is loaded, from
-outside it, and the report puts them next to the latency they caused:
+Collectors sample a system's own metrics while it is loaded, from outside it, and
+the report puts them next to the latency they caused. There are four kinds, and
+one run can use any of them:
+
+| Kind | Reads | Needs |
+| --- | --- | --- |
+| `prometheus` | whatever PromQL can express | a Prometheus server |
+| `docker` | a container's CPU and memory | the Docker socket |
+| `system` | the host autobench runs on | Linux `/proc` |
+| `kubernetes` | a workload's pod CPU and memory | cluster API access |
 
 ```yaml
 collectors:
   interval: 5s
-  prometheus:
-    - name: api
-      url: http://localhost:9090
-      queries:
-        - name: cpu
-          query: rate(process_cpu_seconds_total{job="api"}[1m])
-          unit: cores
-        - name: memory
-          query: process_resident_memory_bytes{job="api"}
-          unit: bytes
 
-    - name: postgres
+  prometheus:
+    - name: pg
       url: http://localhost:9090
       queries:
         - name: connections
           query: pg_stat_activity_count{job="postgres"}
-        - name: cpu
-          query: 100 * (1 - rate(node_cpu_seconds_total{mode="idle"}[1m]))
-          unit: percent
+
+  docker:
+    - name: worker
+      container: my-worker
+      socket: /var/run/docker.sock   # defaults to $DOCKER_HOST, then /var/run/docker.sock
+
+  system:
+    - name: generator
+
+  kubernetes:
+    - name: cluster-api
+      url: https://127.0.0.1:6443
+      token: ""                      # defaults to $AUTOBENCH_K8S_TOKEN, then a mounted service account token
+      namespace: bench
+      selector: app=api
+      insecure: true                 # or ca_file: /path/to/ca.pem, not both
 ```
 
 ```
-  SYSTEM (sampled every 5s)
+  SYSTEM (sampled every 3s)
 
   SERIES                          MIN        MAX        AVG   PEAK AT
-  api cpu (cores)                0.31       0.42       0.37       10s
-  api memory                 204.1MiB   457.8MiB   331.9MiB       10s
-  postgres connections            120        498      342.7       45s
-  postgres cpu                  22.0%      99.0%      61.4%       45s
+  pg connections                  100      167.5      133.8       45s
+  worker cpu                    38.9%      40.0%      39.9%        3s
+  worker memory               61.2MiB   128.7MiB    94.9MiB       45s
+  generator cpu                 38.8%      66.9%      55.9%   101.2ms
+  generator memory            16.5GiB    16.9GiB    16.7GiB       15s
+  generator load                 3.22       5.15      3.991       45s
+  cluster-api cpu (cores)      0.2466     0.6067     0.4267       45s
+  cluster-api memory         203.3MiB   383.3MiB   293.3MiB       45s
 ```
 
-The API never worked hard. The database ran out of connections at 45s — and if
-you have windowed analysis on, you can read that against the window table to see
-whether the latency spike started then.
+Every series records the expression or endpoint it came from — a PromQL string, a
+Docker URL, a `/proc` file, a metrics API URL — so a report can be reproduced by
+hand.
 
 `PEAK AT` is measured from the start of the measurement, on the same timeline the
-window labels use. A series that never moved shows a dash: a connection pool
-pinned at its ceiling has no peak to point at.
+window labels use. A series that never moved shows a dash: a container pinned at
+40% CPU has no peak to point at.
+
+### What each kind is actually for
+
+- **`prometheus`** covers the most ground: whatever the system under test already
+  exports is reachable through it. Use it when there is monitoring in place.
+- **`docker`** is for the case Prometheus cannot cover — a target with no
+  monitoring installed at all. Everything Docker runs already exports CPU and
+  memory. CPU uses the daemon's own documented formula, and memory is reported
+  the way the `docker` CLI reports it: usage minus the reclaimable page cache the
+  kernel counts but the container does not really hold.
+- **`kubernetes`** is for a cluster with no Prometheus: the metrics API is what
+  `kubectl top` reads. Usage is summed across the selected pods, because pod names
+  are generated and mean nothing in a report. Per-pod detail is what the
+  Prometheus collector is for.
+- **`system`** is different from the other three and worth being clear about: it
+  reads the **host autobench itself runs on**. If the system under test runs
+  elsewhere these readings say nothing about it; if it runs on this machine the
+  two are the same host and the report cannot separate them. What they are
+  unambiguously good for is the question a saturation verdict raises — was the
+  *generator*, rather than the target, the thing that ran out?
 
 ### Units
 
-Prometheus values are unitless, so the configuration has to say what they mean.
-`bytes` is rendered in binary units and `percent` with a sign; any other unit is
-attached to the series name (`api cpu (cores)`). Keeping units out of the value
-columns is what keeps a table of mixed units aligned.
+Prometheus and Kubernetes values are unitless or bare numbers, so the
+configuration says what they mean where it can: `bytes` is rendered in binary
+units and `percent` with a sign, and any other unit is attached to the series
+name (`cluster-api cpu (cores)`). Keeping units out of the value columns is what
+keeps a table of mixed units aligned.
 
 ### Collectors never fail a run
 
-A collector is advisory. If Prometheus is unreachable, or a query has a typo, or
-the expression matches nothing, the report says so and the run carries on:
+A collector is advisory. If Prometheus is unreachable, a query has a typo, a
+container is not running, or the cluster refuses the token, the report says so and
+the run carries on:
 
 ```
   ⚠ COLLECTOR PROBLEMS — readings missing, the run is unaffected
     down: cpu: Get "http://127.0.0.1:19999/api/v1/query?query=up": dial tcp 127.0.0.1:19999: connect: connection refused
-    api: typo: prometheus error: unknown expression 'rate(nosuch_metric_total[1m])'
+    worker: my-worker: 404 Not Found: {"message":"No such container: my-worker"}
 ```
 
 The verdict is untouched. Your monitoring being down says nothing about your
 capacity, and a load test that errors because Prometheus is unavailable would be
-worse than useless. Each failure is reported once, however many polls hit it.
+worse than useless. Each failure is reported once, however many polls hit it, and
+one broken reading never costs the others: a container whose CPU the daemon
+cannot compute still reports its memory.
 
 Mistakes that are visible without asking the server — a URL with no host, a
-duplicate name, an empty expression — are rejected at configuration time
-instead.
+duplicate name, a container with no name, a cluster setting both `insecure` and
+`ca_file` — are rejected at configuration time instead.
+
+Source names must be unique across every kind: a name labels every series it
+produces, so two sources sharing one would produce report rows that cannot be
+told apart.
 
 Collectors run for **every** measurement: the fixed run, each search probe and
 the validation run. The capacity report shows the deciding measurement's
@@ -495,15 +540,19 @@ thresholds:
     p95: { max: 500ms }
     p99: { max: 1s }
 
-collectors:          # optional: sample the system under test while it is loaded
+collectors:          # optional: sample a system's own metrics while it is loaded
   interval: 5s
   prometheus:
-    - name: api
+    - name: pg
       url: http://localhost:9090
       queries:
-        - name: cpu
-          query: rate(process_cpu_seconds_total{job="api"}[1m])
-          unit: cores
+        - name: connections
+          query: pg_stat_activity_count{job="postgres"}
+  docker:
+    - name: worker
+      container: my-worker
+  system:
+    - name: generator
 ```
 
 Unknown config keys are rejected, so typos fail fast.
