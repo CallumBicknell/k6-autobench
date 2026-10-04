@@ -5,9 +5,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // RenderCapacity writes the report for a capacity search: every probe it took,

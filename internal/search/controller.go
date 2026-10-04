@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/callum/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
 )
 
 // Controller drives a capacity search.

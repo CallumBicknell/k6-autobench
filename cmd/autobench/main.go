@@ -20,11 +20,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/report"
-	"github.com/callum/k6-autobench/internal/results"
-	"github.com/callum/k6-autobench/internal/runner"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/report"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/runner"
 )
 
 // version is the release this build is. It is a variable so a release build can

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/collect"
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // collectedConfig is a config with one Prometheus source configured, matching

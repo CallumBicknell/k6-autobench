@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/bench"
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/report"
-	"github.com/callum/k6-autobench/internal/results"
-	"github.com/callum/k6-autobench/internal/runner"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/bench"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/report"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/runner"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // capacityReport is the machine-readable form of a capacity search, written by

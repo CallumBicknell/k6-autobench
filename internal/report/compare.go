@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/callum/k6-autobench/internal/compare"
+	"github.com/CallumBicknell/k6-autobench/internal/compare"
 )
 
 // RenderCompare writes the terminal comparison report (PLAN-OUTLINE.md §35).

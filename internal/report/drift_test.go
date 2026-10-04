@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // winEP builds a window whose per-endpoint breakdown carries the given p95s.

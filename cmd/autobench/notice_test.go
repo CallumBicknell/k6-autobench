@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // windowedConfig is a config with windowed analysis on, one request per

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // TestSpecTimeout covers the deadline a k6 process is given: the declared

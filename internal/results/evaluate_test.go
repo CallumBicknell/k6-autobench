@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // baseConfig returns a valid config running 100 iterations/s for 10s with an

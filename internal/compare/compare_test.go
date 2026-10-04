@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
 )
 
 // snap builds a snapshot with just the fields a comparison reads.

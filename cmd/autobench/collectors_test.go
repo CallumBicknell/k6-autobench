@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/collect"
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // collectorConfig builds a config with one Prometheus source and two queries.

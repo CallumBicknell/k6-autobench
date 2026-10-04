@@ -1,4 +1,4 @@
-module github.com/callum/k6-autobench
+module github.com/CallumBicknell/k6-autobench
 
 go 1.24
 

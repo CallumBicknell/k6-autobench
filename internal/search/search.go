@@ -17,7 +17,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
 )
 
 // Phase records where in the search a probe was taken.

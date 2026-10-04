@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // runFlags mirrors the variables runCommand binds its flags to.

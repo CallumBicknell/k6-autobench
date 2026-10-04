@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/compare"
+	"github.com/CallumBicknell/k6-autobench/internal/compare"
 )
 
 // comparePage is the view model for the comparison report. Like the others every

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // envValue reads one entry out of a built environment.

@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/compare"
-	"github.com/callum/k6-autobench/internal/report"
+	"github.com/CallumBicknell/k6-autobench/internal/compare"
+	"github.com/CallumBicknell/k6-autobench/internal/report"
 )
 
 // compareReport is the machine-readable form of a comparison, written by --json.

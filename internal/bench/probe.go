@@ -1,8 +1,8 @@
 package bench
 
 import (
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
 )
 
 // init lazily initialises the growth budget so a zero-value Measurer is usable.

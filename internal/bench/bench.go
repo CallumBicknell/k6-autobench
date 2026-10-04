@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/collect"
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/results"
-	"github.com/callum/k6-autobench/internal/runner"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/runner"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // K6Runner executes a single measurement. *runner.Runner satisfies it; tests

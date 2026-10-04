@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/collect"
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
-	k6script "github.com/callum/k6-autobench/k6"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	k6script "github.com/CallumBicknell/k6-autobench/k6"
 )
 
 // Spec is everything the controller hands to a single k6 invocation.

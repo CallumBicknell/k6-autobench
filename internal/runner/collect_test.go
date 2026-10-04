@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/callum/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
 )
 
 // fakeCollector records its lifecycle, so the runner's bracketing of a

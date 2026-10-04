@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
 )
 
 // measure runs the probe at a rate until the confirmation rule is satisfied.

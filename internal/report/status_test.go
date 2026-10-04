@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // classCount is one class/count pair for building a test fixture.

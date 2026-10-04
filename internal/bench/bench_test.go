@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/collect"
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/results"
-	"github.com/callum/k6-autobench/internal/runner"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/runner"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // fakeRunner returns canned k6 summaries and records the specs it was given.

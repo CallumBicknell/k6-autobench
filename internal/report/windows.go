@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // featuredPercentile picks the percentile to lead with in the windowed view. It

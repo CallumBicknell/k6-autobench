@@ -1,8 +1,8 @@
 package results
 
 import (
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // WindowFailures evaluates the configured SLOs against every window of a run and

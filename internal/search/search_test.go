@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
 )
 
 // capacityProbe models a system with a hard capacity: probes at or below it

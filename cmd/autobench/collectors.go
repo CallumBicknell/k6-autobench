@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/collect"
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/collect"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // buildCollectors turns the configured collectors into the objects that observe

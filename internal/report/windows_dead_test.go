@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // windowAt builds one window with a p95 and an error count.

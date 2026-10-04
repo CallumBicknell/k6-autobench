@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
 )
 
 // sampleBytesPerRequest is the measured cost of windowed analysis: k6 streams a

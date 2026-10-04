@@ -3,7 +3,7 @@ package report
 import (
 	"fmt"
 
-	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
 )
 
 // statusHint explains what a response-class mix implies.

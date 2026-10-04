@@ -13,10 +13,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/metrics"
-	"github.com/callum/k6-autobench/internal/results"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/metrics"
+	"github.com/CallumBicknell/k6-autobench/internal/results"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // Snapshot is a recorded run normalised for comparison, whichever command wrote

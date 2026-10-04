@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/callum/k6-autobench/internal/config"
-	"github.com/callum/k6-autobench/internal/search"
+	"github.com/CallumBicknell/k6-autobench/internal/config"
+	"github.com/CallumBicknell/k6-autobench/internal/search"
 )
 
 // operating is what a policy makes of a measured capacity (PLAN-OUTLINE.md §24).
