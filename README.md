@@ -949,13 +949,31 @@ out of VUs or drops iterations, autobench detects it and reports
 ## Development
 
 ```bash
-make test    # go test ./...
-make vet     # go vet ./...
-make build   # build ./bin/autobench
-make image   # build the container
+make test     # go test ./...
+make vet      # go vet ./...
+make build    # build ./bin/autobench
+make image    # build the container
+make release  # cross-compile the six release binaries into dist/
 ```
 
 `make test` runs the suite `-race`-clean. The suite drives real subprocesses for
-the parts that are about subprocesses — the k6 timeout tests use a shell script
-standing in for k6, because hanging a process on purpose is the only way to test
-what happens when one hangs.
+the parts that are about subprocesses — the k6 timeout and mTLS tests run the real
+k6 against a local server, because the bugs they exist for lived in the
+interaction between the embedded script and the environment autobench builds, and
+a unit test of either half would have passed.
+
+`make release` writes `autobench_<version>_<os>_<arch>` for linux, darwin and
+windows on amd64 and arm64, plus `checksums.txt`. The version in the filename is
+read from the source constant, so a filename cannot disagree with what the binary
+reports. The build records its commit and time:
+
+```text
+$ ./dist/autobench_1.0.0_linux_amd64 version
+autobench 1.0.0 (e6ca963, built 2026-10-04T16:12:40Z)
+```
+
+A plain `go build` leaves those out and reports just `autobench 1.0.0`, rather
+than inventing a build identity it does not have.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, runs
+`make release` and attaches the artefacts to the release.

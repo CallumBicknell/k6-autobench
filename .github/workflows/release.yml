@@ -1,0 +1,48 @@
+# Cut a release from a tag: cross-compile the binaries, then attach them to the
+# release.
+#
+# The build flags match `make release`, so a binary built here and one built
+# locally are the same artefact. The version itself is not passed in: it is the
+# constant the README documents and the test suite checks, so letting a tag
+# rewrite it would put the published statement and the binary out of step.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # So the build can be tried without publishing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test before shipping
+        run: go test ./...
+
+      - name: Cross-compile
+        run: make release
+
+      - name: Upload the artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: autobench-binaries
+          path: dist/
+
+      - name: Attach them to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

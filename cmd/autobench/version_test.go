@@ -11,6 +11,38 @@ import (
 // statusRE finds the version the README claims this build is.
 var statusRE = regexp.MustCompile(`Status: V(\d+\.\d+)`)
 
+// TestVersionLine covers what a release build records and what a plain one does
+// not: the commit and build time come from -ldflags, and their absence has to read
+// as absence rather than as an invented build identity.
+func TestVersionLine(t *testing.T) {
+	savedVersion, savedCommit, savedBuiltAt := version, commit, builtAt
+	t.Cleanup(func() { version, commit, builtAt = savedVersion, savedCommit, savedBuiltAt })
+
+	tests := []struct {
+		name    string
+		version string
+		commit  string
+		builtAt string
+		want    string
+	}{
+		{"a plain build", "1.0.0", "", "", "autobench 1.0.0"},
+		{"a release build", "1.0.0", "abc1234", "2026-10-04T12:00:00Z",
+			"autobench 1.0.0 (abc1234, built 2026-10-04T12:00:00Z)"},
+		{"a commit with no date", "1.0.0", "abc1234", "", "autobench 1.0.0 (abc1234)"},
+		{"a date with no commit", "1.0.0", "", "2026-10-04T12:00:00Z",
+			"autobench 1.0.0 (built 2026-10-04T12:00:00Z)"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			version, commit, builtAt = tc.version, tc.commit, tc.builtAt
+			if got := versionLine(); got != tc.want {
+				t.Errorf("versionLine() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestVersionIsSemver checks the constant is shaped like a version, so the
 // comparison below cannot be satisfied by accident.
 func TestVersionIsSemver(t *testing.T) {

@@ -27,7 +27,33 @@ import (
 	"github.com/callum/k6-autobench/internal/runner"
 )
 
-const version = "1.0.0"
+// version is the release this build is. It is a variable so a release build can
+// set it from the tag; a plain `go build` leaves it at the constant the README
+// documents, and the version guard checks that constant.
+var version = "1.0.0"
+
+// commit and builtAt are recorded by a release build through -ldflags. They are
+// empty in a plain `go build`, and `autobench version` says so rather than
+// inventing a build identity it does not have.
+var (
+	commit  = ""
+	builtAt = ""
+)
+
+// versionLine is what `autobench version` prints: the release, and which build of
+// it when one was recorded.
+func versionLine() string {
+	out := "autobench " + version
+	switch {
+	case commit != "" && builtAt != "":
+		out += " (" + commit + ", built " + builtAt + ")"
+	case commit != "":
+		out += " (" + commit + ")"
+	case builtAt != "":
+		out += " (built " + builtAt + ")"
+	}
+	return out
+}
 
 // Exit codes.
 const (
@@ -71,7 +97,7 @@ func dispatch(args []string) int {
 	case "compare":
 		return compareCommand(args[1:])
 	case "version", "--version", "-v":
-		fmt.Printf("autobench %s\n", version)
+		fmt.Println(versionLine())
 		return exitPass
 	case "help", "--help", "-h":
 		usage(os.Stdout)

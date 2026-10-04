@@ -10,3 +10,6 @@
 /results/
 /result.json
 /summary.json
+
+# release binaries
+/dist/
