@@ -336,6 +336,12 @@ func TestDockerEndpointResolution(t *testing.T) {
 			name: "a scheme autobench cannot speak", env: "ssh://host",
 			wantErr: "unsupported DOCKER_HOST scheme",
 		},
+		{
+			// A named pipe is not a unix socket, and dialing one as a path fails
+			// the same confusing way a tcp:// host used to.
+			name: "a Windows named pipe", env: "npipe:////./pipe/docker_engine",
+			wantErr: "Windows named pipe",
+		},
 	}
 
 	for _, tc := range tests {

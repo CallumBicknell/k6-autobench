@@ -38,6 +38,30 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/bench" \
 image runs as uid 12345, so without it the container cannot write to a
 host-owned mount.
 
+### Platforms
+
+autobench builds and runs on Linux, macOS and Windows (`linux`/`darwin`/`windows`
+× `amd64`/`arm64`). Two collectors are narrower than the rest:
+
+| Collector | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| `prometheus` | ✓ | ✓ | ✓ |
+| `kubernetes` | ✓ | ✓ | ✓ |
+| `system` | ✓ | — | — |
+| `docker` | ✓ (socket or tcp) | ✓ (socket or tcp) | tcp only |
+
+`system` reads the kernel's own counters from `/proc`, which only Linux has. On
+another platform it reports that once, by name, rather than failing three files on
+every tick.
+
+`docker` reaches the daemon over a unix socket or a `tcp://` daemon. A Windows
+named pipe (`npipe://`) is not a unix socket, and autobench has no named-pipe
+dialer, so it refuses it by name instead of failing with a confusing path error.
+Point `DOCKER_HOST` at a `tcp://` daemon to use it on Windows.
+
+Everything else — the fixed run, the capacity search, the comparison, the
+windowed analysis and the reports — is platform-independent.
+
 ## Usage
 
 ```bash

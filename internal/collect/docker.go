@@ -247,7 +247,7 @@ func (d *Docker) endpoint() (endpoint, error) {
 		return endpoint{network: "unix", address: DefaultDockerSocket}, nil
 	}
 
-	for _, prefix := range []string{"unix://", "npipe://"} {
+	for _, prefix := range []string{"unix://"} {
 		if path, ok := strings.CutPrefix(raw, prefix); ok {
 			return endpoint{network: "unix", address: path}, nil
 		}
@@ -256,6 +256,15 @@ func (d *Docker) endpoint() (endpoint, error) {
 		if addr, ok := strings.CutPrefix(raw, prefix); ok {
 			return endpoint{network: "tcp", address: addr}, nil
 		}
+	}
+	// A Windows named pipe is not a unix socket, and dialing one as a path would
+	// fail the same confusing way a tcp:// host used to. Go has no named-pipe
+	// dialer without a platform package this project does not carry, so it is
+	// refused by name rather than pretended.
+	if strings.HasPrefix(raw, "npipe://") {
+		return endpoint{}, fmt.Errorf(
+			"DOCKER_HOST %q is a Windows named pipe, which autobench cannot dial: "+
+				"point it at a tcp:// daemon or run autobench where the daemon has a unix socket", raw)
 	}
 	if strings.Contains(raw, "://") {
 		return endpoint{}, fmt.Errorf(
