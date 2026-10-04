@@ -20,6 +20,9 @@ arrival-rate generator.
 
 Requires Go 1.24+ and `k6` on your `PATH` (or set `AUTOBENCH_K6`).
 
+Tested against k6 v0.49.0 and v2.1.0 — a fixed run, a capacity search and
+windowed analysis all work on both, so anything in between should be fine.
+
 ```bash
 go build -o bin/autobench ./cmd/autobench
 # or

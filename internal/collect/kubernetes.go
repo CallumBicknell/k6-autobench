@@ -43,6 +43,11 @@ type Kubernetes struct {
 	// CAFile is a PEM bundle to verify the API server against. Empty means the
 	// system roots.
 	CAFile string
+	// TokenPath is where a mounted service account token is read from. Empty
+	// means DefaultServiceAccountToken, which is where the kubelet mounts it.
+	// It is settable for the same reason System.Proc and Docker.Socket are: the
+	// production path is a fixed location this test cannot write to.
+	TokenPath string
 	// Insecure skips verification of the API server's certificate.
 	Insecure bool
 	// Interval is how often the cluster is sampled.
@@ -98,11 +103,19 @@ func (k *Kubernetes) token() string {
 	if v := strings.TrimSpace(os.Getenv("AUTOBENCH_K8S_TOKEN")); v != "" {
 		return v
 	}
-	raw, err := os.ReadFile(DefaultServiceAccountToken)
+	raw, err := os.ReadFile(k.tokenPath())
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+// tokenPath is where a mounted service account token is read from.
+func (k *Kubernetes) tokenPath() string {
+	if k.TokenPath != "" {
+		return k.TokenPath
+	}
+	return DefaultServiceAccountToken
 }
 
 // client builds the API client from the TLS settings.
