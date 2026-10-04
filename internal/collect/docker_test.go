@@ -191,6 +191,53 @@ func TestDockerMemoryNeverGoesNegative(t *testing.T) {
 	}
 }
 
+// TestDockerSurvivesANegativeCounter is the bug a live run found: the API
+// declares the counters unsigned, so a negative one failed the whole decode and
+// took the unrelated memory reading down with it.
+func TestDockerSurvivesANegativeCounter(t *testing.T) {
+	body := `{
+	  "cpu_stats": {"cpu_usage": {"total_usage": 200}, "system_cpu_usage": 1000, "online_cpus": 1},
+	  "precpu_stats": {"cpu_usage": {"total_usage": -48}, "system_cpu_usage": -500},
+	  "memory_stats": {"usage": 104857600, "limit": 0, "stats": {"inactive_file": 0}}
+	}`
+	_, srv := newFakeDocker(t, 200, body)
+	d := dockerOn(&Docker{Source: "api", Container: "c", Interval: time.Hour}, srv)
+
+	report := measureDocker(t, d, func() {})
+
+	// The reading the daemon did send survives, whatever the CPU section says.
+	mem := seriesNamed(t, report, "memory")
+	if got := mem.Samples[0].Value; got != 104857600 {
+		t.Errorf("memory = %v, want the reading the daemon did send", got)
+	}
+	for _, f := range report.Failures {
+		if strings.Contains(f.Error, "decode response") {
+			t.Errorf("a negative counter should not fail the decode: %v", f)
+		}
+	}
+}
+
+// TestDockerRejectsACPUDeltaThatWentBackwards covers the counters moving the
+// wrong way: there is no interval to measure over, so it is reported rather than
+// computed into a percentage that is not there.
+func TestDockerRejectsACPUDeltaThatWentBackwards(t *testing.T) {
+	body := `{
+	  "cpu_stats": {"cpu_usage": {"total_usage": 100}, "system_cpu_usage": 2000, "online_cpus": 1},
+	  "precpu_stats": {"cpu_usage": {"total_usage": 200}, "system_cpu_usage": 1000},
+	  "memory_stats": {"usage": 104857600, "limit": 0, "stats": {"inactive_file": 0}}
+	}`
+	_, srv := newFakeDocker(t, 200, body)
+	d := dockerOn(&Docker{Source: "api", Container: "c", Interval: time.Hour}, srv)
+
+	report := measureDocker(t, d, func() {})
+	if len(report.Series) != 1 || report.Series[0].Name != "memory" {
+		t.Fatalf("series = %v, want memory alone", seriesNames(report))
+	}
+	if len(report.Failures) != 1 || !strings.Contains(report.Failures[0].Error, "two samples") {
+		t.Errorf("failures = %v, want the impossible interval reported", report.Failures)
+	}
+}
+
 // TestDockerReportsFailures covers a daemon that does not know the container,
 // one that fails, and one that answers with something else entirely.
 func TestDockerReportsFailures(t *testing.T) {

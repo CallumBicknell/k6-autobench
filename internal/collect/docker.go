@@ -135,31 +135,37 @@ func (dp *dockerPoller) endpoint() string {
 // dockerStats is the part of the daemon's stats response this collector reads.
 // The documented CPU percentage needs both the current and previous counters,
 // which is why precpu_stats is here.
+//
+// The counters are int64 rather than the uint64 the API declares. A counter is
+// cumulative and cannot go backwards on a healthy daemon, but one that does --
+// a restarted daemon, a proxy, a mocked daemon -- would fail the decode and take
+// the unrelated memory reading down with it. Signed counters let cpuPercent's
+// own guard report the impossible delta instead, and no counter reaches 2^63.
 type dockerStats struct {
 	CPU struct {
 		CPUUsage struct {
-			TotalUsage  uint64   `json:"total_usage"`
-			PerCPUUsage []uint64 `json:"percpu_usage"`
+			TotalUsage  int64   `json:"total_usage"`
+			PerCPUUsage []int64 `json:"percpu_usage"`
 		} `json:"cpu_usage"`
-		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		SystemCPUUsage int64  `json:"system_cpu_usage"`
 		OnlineCPUs     uint32 `json:"online_cpus"`
 	} `json:"cpu_stats"`
 
 	PreCPU struct {
 		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
+			TotalUsage int64 `json:"total_usage"`
 		} `json:"cpu_usage"`
-		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		SystemCPUUsage int64 `json:"system_cpu_usage"`
 	} `json:"precpu_stats"`
 
 	Memory struct {
-		Usage uint64 `json:"usage"`
-		Limit uint64 `json:"limit"`
+		Usage int64 `json:"usage"`
+		Limit int64 `json:"limit"`
 		Stats struct {
 			// cgroups v2 reclaimable page cache.
-			InactiveFile uint64 `json:"inactive_file"`
+			InactiveFile int64 `json:"inactive_file"`
 			// cgroups v1 reclaimable page cache.
-			Cache uint64 `json:"cache"`
+			Cache int64 `json:"cache"`
 		} `json:"stats"`
 	} `json:"memory_stats"`
 }
@@ -168,11 +174,11 @@ type dockerStats struct {
 //
 //	(cpu_delta / system_cpu_delta) * online_cpus * 100
 //
-// It reports false when the daemon has not produced two samples yet, rather
-// than inventing a zero.
+// It reports false when the daemon has not produced two samples yet, or when the
+// counters went backwards, rather than inventing a zero.
 func (s dockerStats) cpuPercent() (float64, bool) {
-	cpuDelta := float64(s.CPU.CPUUsage.TotalUsage) - float64(s.PreCPU.CPUUsage.TotalUsage)
-	systemDelta := float64(s.CPU.SystemCPUUsage) - float64(s.PreCPU.SystemCPUUsage)
+	cpuDelta := float64(s.CPU.CPUUsage.TotalUsage - s.PreCPU.CPUUsage.TotalUsage)
+	systemDelta := float64(s.CPU.SystemCPUUsage - s.PreCPU.SystemCPUUsage)
 	if systemDelta <= 0 || cpuDelta < 0 {
 		return 0, false
 	}
