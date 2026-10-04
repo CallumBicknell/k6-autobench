@@ -734,6 +734,10 @@ name: social-api
 
 target:
   base_url: http://localhost:3000
+  request_timeout: 10s   # optional; k6's own default is 60s
+  tls:                   # optional; for a target the system roots do not cover
+    insecure: true       # accept any certificate
+    # ca_file: /etc/ssl/private-ca.pem   # or verify against a bundle
 
 workload:
   type: http
@@ -786,6 +790,32 @@ operating_policy:    # optional: turn the capacity into a rate to run at
 ```
 
 Unknown config keys are rejected, so typos fail fast.
+
+### Benchmarking a staging target
+
+Staging environments very commonly present a certificate the system roots do not
+know, and k6 verifies by default — so without these two settings every request
+fails at the handshake and the report says the target never answered.
+
+```yaml
+target:
+  base_url: https://staging.internal
+  tls:
+    ca_file: /etc/ssl/private-ca.pem   # verify against a bundle
+    # insecure: true                   # or turn verification off entirely
+```
+
+`ca_file` is the better option where the CA is known: it tells autobench what to
+trust rather than turning verification off. It is passed to k6 as `SSL_CERT_FILE`,
+which is how k6 itself reads a custom trust store, so it *replaces* the system
+roots for the run. A path that does not exist is caught before the run starts,
+because the alternative is an empty trust store and a failure that names the
+certificate rather than the typo.
+
+`request_timeout` bounds one HTTP request. k6's own default is 60s, which is far
+longer than a probe: a target that hangs makes the probe last a minute rather than
+the duration it was configured for, so the run measures the hang instead of the
+load. Set it below `probe_duration`.
 
 ### Iterations vs requests
 

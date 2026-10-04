@@ -113,6 +113,56 @@ func TestBuildEnvRejectsZeroRate(t *testing.T) {
 }
 
 // TestBuildEnvCarriesEverythingElse keeps the rest of the contract honest.
+// TestBuildEnvCarriesTheTargetTLSSettings covers the two ways a staging target
+// with a certificate the system roots do not know can be reached at all.
+func TestBuildEnvCarriesTheTargetTLSSettings(t *testing.T) {
+	spec := specFor(config.Workload{Requests: []config.Request{{Name: "a", Path: "/a"}}})
+	spec.InsecureTLS = true
+	spec.CAFile = "/etc/ssl/private-ca.pem"
+	spec.RequestTimeout = 3 * time.Second
+
+	env, err := buildEnv(spec, "/tmp/summary.json")
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+
+	checks := map[string]string{
+		"AUTOBENCH_INSECURE_TLS":    "true",
+		"AUTOBENCH_REQUEST_TIMEOUT": "3s",
+		// k6 reads its trust store from this variable, so the CA is passed the
+		// way k6 itself expects rather than through the script.
+		"SSL_CERT_FILE": "/etc/ssl/private-ca.pem",
+	}
+	for key, want := range checks {
+		if got := envValue(t, env, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// TestBuildEnvLeavesTLSSettingsAloneByDefault: a run that asks for nothing gets
+// nothing, so the ordinary case is unchanged.
+func TestBuildEnvLeavesTLSSettingsAloneByDefault(t *testing.T) {
+	spec := specFor(config.Workload{Requests: []config.Request{{Name: "a", Path: "/a"}}})
+
+	env, err := buildEnv(spec, "/tmp/summary.json")
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+
+	if got := envValue(t, env, "AUTOBENCH_INSECURE_TLS"); got != "false" {
+		t.Errorf("AUTOBENCH_INSECURE_TLS = %q, want false", got)
+	}
+	if got := envValue(t, env, "AUTOBENCH_REQUEST_TIMEOUT"); got != "0s" {
+		t.Errorf("AUTOBENCH_REQUEST_TIMEOUT = %q, want 0s (k6's own default)", got)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "SSL_CERT_FILE=") {
+			t.Errorf("SSL_CERT_FILE was set without a ca_file: %s", kv)
+		}
+	}
+}
+
 func TestBuildEnvCarriesEverythingElse(t *testing.T) {
 	spec := specFor(config.Workload{Requests: []config.Request{{Name: "a", Path: "/a"}}})
 	spec.Window = 5 * time.Second

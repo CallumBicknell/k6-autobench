@@ -44,6 +44,12 @@ type Measurer struct {
 	// Timeout, when > 0, bounds how long each k6 process may run. Zero means the
 	// measurement's own duration plus a grace period.
 	Timeout time.Duration
+	// InsecureTLS and CAFile configure how the target's certificate is treated.
+	InsecureTLS bool
+	CAFile      string
+	// RequestTimeout, when > 0, bounds one HTTP request. Zero means k6's own
+	// default of 60s.
+	RequestTimeout time.Duration
 	// Collectors, when set, observe the system under test's own metrics during
 	// every measurement (PLAN-OUTLINE.md §33).
 	Collectors []collect.Collector
@@ -129,6 +135,9 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		Percentiles:     m.Config.Percentiles,
 		Window:          m.Window,
 		Timeout:         m.Timeout,
+		InsecureTLS:     m.InsecureTLS,
+		CAFile:          m.CAFile,
+		RequestTimeout:  m.RequestTimeout,
 		Collectors:      m.Collectors,
 	}
 

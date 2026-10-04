@@ -772,3 +772,70 @@ func containsFloat(haystack []float64, needle float64) bool {
 	}
 	return false
 }
+
+// TestTargetTLSValidation covers the settings that make a staging target
+// reachable, and the typo that would otherwise fail for the wrong reason.
+func TestTargetTLSValidation(t *testing.T) {
+	valid := func() *Config {
+		cfg := &Config{
+			Target: Target{BaseURL: "http://localhost:3000"},
+			Run: Run{
+				Rate:     100,
+				Duration: Duration{Duration: time.Second},
+			},
+		}
+		cfg.ApplyDefaults()
+		return cfg
+	}
+
+	t.Run("insecure needs no other setting", func(t *testing.T) {
+		cfg := valid()
+		cfg.Target.TLS.Insecure = true
+		if err := cfg.ValidateMode(ModeFixed); err != nil {
+			t.Errorf("insecure should be accepted: %v", err)
+		}
+	})
+
+	t.Run("a ca_file that exists", func(t *testing.T) {
+		ca := filepath.Join(t.TempDir(), "ca.pem")
+		if err := os.WriteFile(ca, []byte("-----BEGIN CERTIFICATE-----\n"), 0o644); err != nil {
+			t.Fatalf("write ca: %v", err)
+		}
+		cfg := valid()
+		cfg.Target.TLS.CAFile = ca
+		if err := cfg.ValidateMode(ModeFixed); err != nil {
+			t.Errorf("an existing ca_file should be accepted: %v", err)
+		}
+	})
+
+	t.Run("a ca_file that is not there", func(t *testing.T) {
+		cfg := valid()
+		cfg.Target.TLS.CAFile = filepath.Join(t.TempDir(), "nope.pem")
+		err := cfg.ValidateMode(ModeFixed)
+		if err == nil {
+			t.Fatal("a missing ca_file should be rejected")
+		}
+		// It is passed to k6 as SSL_CERT_FILE, and a path that does not exist
+		// leaves an empty trust store, so every request would fail verification
+		// for a reason naming the certificate rather than the typo.
+		if !strings.Contains(err.Error(), "ca_file") {
+			t.Errorf("err = %v, want it to name the setting", err)
+		}
+	})
+
+	t.Run("a ca_file that is a directory", func(t *testing.T) {
+		cfg := valid()
+		cfg.Target.TLS.CAFile = t.TempDir()
+		if err := cfg.ValidateMode(ModeFixed); err == nil {
+			t.Error("a directory should be rejected as a PEM bundle")
+		}
+	})
+
+	t.Run("a negative request_timeout", func(t *testing.T) {
+		cfg := valid()
+		cfg.Target.RequestTimeout = Duration{Duration: -time.Second}
+		if err := cfg.ValidateMode(ModeFixed); err == nil {
+			t.Error("a negative request_timeout should be rejected")
+		}
+	})
+}

@@ -42,6 +42,13 @@ type Spec struct {
 	// result carries the server-side view alongside k6's client-side one
 	// (PLAN-OUTLINE.md §33).
 	Collectors []collect.Collector
+	// InsecureTLS accepts any certificate the target presents.
+	InsecureTLS bool
+	// CAFile is a PEM bundle to verify the target against. k6 reads it from
+	// SSL_CERT_FILE, so it replaces the system roots for this run.
+	CAFile string
+	// RequestTimeout bounds one HTTP request. Zero means k6's own default.
+	RequestTimeout time.Duration
 	// Timeout bounds how long the k6 process may run. Zero means Duration plus
 	// DefaultGrace, which is generous enough never to fire on a healthy run and
 	// bounded enough that a wedged k6 cannot hang a pipeline forever.
@@ -365,6 +372,13 @@ func buildEnv(spec Spec, summaryPath string) ([]string, error) {
 		"AUTOBENCH_WORKLOAD_MODE="+mode,
 		"AUTOBENCH_WORKLOAD="+string(workloadJSON),
 		"AUTOBENCH_SUMMARY_PATH="+summaryPath,
+		"AUTOBENCH_INSECURE_TLS="+strconv.FormatBool(spec.InsecureTLS),
+		"AUTOBENCH_REQUEST_TIMEOUT="+spec.RequestTimeout.String(),
 	)
+	// k6 reads the trust store from SSL_CERT_FILE, so a private CA is passed the
+	// way k6 itself expects rather than through the script.
+	if ca := strings.TrimSpace(spec.CAFile); ca != "" {
+		env = append(env, "SSL_CERT_FILE="+ca)
+	}
 	return env, nil
 }

@@ -26,6 +26,10 @@ const PERCENTILES = JSON.parse(__ENV.AUTOBENCH_PERCENTILES || '[50,75,90,95,99,9
 const WORKLOAD_MODE = __ENV.AUTOBENCH_WORKLOAD_MODE || 'weighted';
 const WORKLOAD = JSON.parse(__ENV.AUTOBENCH_WORKLOAD || '[]');
 const SUMMARY_PATH = __ENV.AUTOBENCH_SUMMARY_PATH || '';
+// A staging target commonly presents a certificate the system roots do not know,
+// and k6 verifies by default, so the switch is passed through rather than assumed.
+const INSECURE_TLS = (__ENV.AUTOBENCH_INSECURE_TLS || 'false') === 'true';
+const REQUEST_TIMEOUT = __ENV.AUTOBENCH_REQUEST_TIMEOUT || '';
 
 // k6 emits one value per requested stat; "med" is the p50 alias.
 const trendStats = ['avg', 'min', 'max', 'med'].concat(
@@ -62,6 +66,7 @@ export const options = {
   },
   summaryTrendStats: trendStats,
   thresholds: submetricThresholds(),
+  insecureSkipTLSVerify: INSECURE_TLS,
 };
 
 // Pre-compute a cumulative-weight table so each iteration picks a request with
@@ -91,6 +96,13 @@ function doRequest(req) {
   const params = { tags: { name: req.name || req.path } };
   if (req.headers) {
     params.headers = req.headers;
+  }
+  // k6 has no global HTTP timeout: it is a per-request parameter, and it defaults
+  // to 60s. A target that hangs would otherwise make the probe last a minute
+  // rather than the duration it was configured for, and the run would measure the
+  // hang rather than the load.
+  if (REQUEST_TIMEOUT) {
+    params.timeout = REQUEST_TIMEOUT;
   }
 
   if (method === 'GET' || method === 'HEAD' || method === 'DELETE' || method === 'OPTIONS') {

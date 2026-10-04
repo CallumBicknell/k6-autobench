@@ -101,14 +101,17 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 	defer stop()
 
 	m := &bench.Measurer{
-		Config:      cfg,
-		Runner:      &runner.Runner{K6Path: k6Path, ScriptPath: scriptPath},
-		Warmup:      cfg.Search.Warmup.Duration,
-		MaxVUGrowth: cfg.Search.MaxVUGrowth,
-		Window:      cfg.Analysis.Window.Duration,
-		Timeout:     cfg.Run.K6Timeout.Duration,
-		Collectors:  buildCollectors(cfg),
-		OnProgress:  func(msg string) { fmt.Fprintln(os.Stderr, "autobench: "+msg) },
+		Config:         cfg,
+		Runner:         &runner.Runner{K6Path: k6Path, ScriptPath: scriptPath},
+		Warmup:         cfg.Search.Warmup.Duration,
+		MaxVUGrowth:    cfg.Search.MaxVUGrowth,
+		Window:         cfg.Analysis.Window.Duration,
+		Timeout:        cfg.Run.K6Timeout.Duration,
+		InsecureTLS:    cfg.Target.TLS.Insecure,
+		CAFile:         cfg.Target.TLS.CAFile,
+		RequestTimeout: cfg.Target.RequestTimeout.Duration,
+		Collectors:     buildCollectors(cfg),
+		OnProgress:     func(msg string) { fmt.Fprintln(os.Stderr, "autobench: "+msg) },
 	}
 	if notice := collectorNotice(cfg); notice != "" {
 		fmt.Fprintf(os.Stderr, "autobench: sampling %s per probe\n", notice)

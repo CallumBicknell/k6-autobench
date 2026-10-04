@@ -187,6 +187,9 @@ func (c *Config) ValidateMode(mode Mode) error {
 	if err := c.validateOperatingPolicy(); err != nil {
 		return err
 	}
+	if err := c.validateTargetTLS(); err != nil {
+		return err
+	}
 	if c.LoadGenerator.MaxVUs < c.LoadGenerator.PreAllocatedVUs {
 		return fmt.Errorf("load_generator.max_vus (%d) must be >= pre_allocated_vus (%d)",
 			c.LoadGenerator.MaxVUs, c.LoadGenerator.PreAllocatedVUs)
@@ -264,6 +267,31 @@ func (c *Config) validateAnalysis() error {
 // checks only: whether a source actually answers is discovered at run time and
 // reported as a note, because a target's monitoring being unreachable must never
 // fail a load test.
+// validateTargetTLS rejects a TLS configuration that could not work.
+//
+// A CA file that is not there is worth catching before the run: it is passed to
+// k6 as SSL_CERT_FILE, and a path that does not exist leaves the process with an
+// empty trust store, so every request fails verification for a reason that names
+// the certificate rather than the typo.
+func (c *Config) validateTargetTLS() error {
+	if c.Target.RequestTimeout.Duration < 0 {
+		return errors.New("target.request_timeout must not be negative")
+	}
+
+	ca := strings.TrimSpace(c.Target.TLS.CAFile)
+	if ca == "" {
+		return nil
+	}
+	info, err := os.Stat(ca)
+	if err != nil {
+		return fmt.Errorf("target.tls.ca_file: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("target.tls.ca_file %s is a directory, not a PEM bundle", ca)
+	}
+	return nil
+}
+
 // validateOperatingPolicy rejects a policy that could not mean anything.
 func (c *Config) validateOperatingPolicy() error {
 	p := c.OperatingPolicy

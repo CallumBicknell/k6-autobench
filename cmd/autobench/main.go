@@ -195,6 +195,9 @@ func runCommand(args []string) int {
 		Percentiles:     cfg.Percentiles,
 		Window:          cfg.Analysis.Window.Duration,
 		Timeout:         cfg.Run.K6Timeout.Duration,
+		InsecureTLS:     cfg.Target.TLS.Insecure,
+		CAFile:          cfg.Target.TLS.CAFile,
+		RequestTimeout:  cfg.Target.RequestTimeout.Duration,
 		Collectors:      buildCollectors(cfg),
 	}
 

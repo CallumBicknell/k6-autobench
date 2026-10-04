@@ -137,6 +137,31 @@ func (c *Config) PinMaxVUs() { c.maxVUsExplicit = true }
 // Target describes the system under test.
 type Target struct {
 	BaseURL string `yaml:"base_url"`
+	// RequestTimeout bounds one HTTP request. Empty means k6's own default of
+	// 60s, which is far longer than a probe: a target that hangs would make the
+	// probe take a minute rather than the duration it was configured for, and
+	// the run would measure the hang rather than the load.
+	RequestTimeout Duration `yaml:"request_timeout"`
+	// TLS configures how the target's certificate is treated.
+	TLS TargetTLS `yaml:"tls"`
+}
+
+// TargetTLS configures TLS for the system under test.
+//
+// A staging environment is the ordinary case this exists for: it very commonly
+// presents a self-signed certificate or one from a CA that is not in the system
+// roots, and without these settings there is no way to benchmark it at all --
+// every request fails at the handshake, and the report says the target never
+// answered.
+type TargetTLS struct {
+	// Insecure accepts any certificate the target presents. It is the blunt
+	// option: it turns verification off rather than telling autobench what to
+	// trust, so prefer CAFile where the CA is known.
+	Insecure bool `yaml:"insecure"`
+	// CAFile is a PEM bundle to verify the target against. It replaces the
+	// system roots for the k6 process, which is what k6 itself does with
+	// SSL_CERT_FILE.
+	CAFile string `yaml:"ca_file"`
 }
 
 // Workload describes the HTTP work one iteration performs.
