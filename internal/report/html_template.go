@@ -160,6 +160,17 @@ const htmlBody = `<main>
 {{end}}</ul></div>
 {{end}}
 
+{{if .Correlated}}
+<h2>Likely correlated</h2>
+<p class="note">{{.CorrelatedNote}}</p>
+<table>
+<thead><tr><th>Series</th><th class="num">r</th><th class="num">Windows</th></tr></thead>
+<tbody>
+{{range .Correlated}}  <tr{{if .Flag}} class="worst"{{end}}><td>{{.Series}}</td><td class="num">{{.R}}</td><td class="num">{{.Windows}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}
+
 {{if .Probes}}
 <h2>Probes</h2>
 <table>

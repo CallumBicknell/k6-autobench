@@ -4,6 +4,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/callum/k6-autobench/internal/collect"
@@ -69,6 +70,7 @@ func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, 
 	p.windows(r.Windows, cfg)
 	p.endpointDrift(r.Windows, r.Metrics, cfg)
 	p.system(r.System, cfg)
+	p.correlated(r.Windows, r.System, cfg)
 
 	p.separator()
 
@@ -199,6 +201,39 @@ func (p *printer) system(r collect.Report, cfg *config.Config) {
 	}
 
 	p.collectorIssues(r.Failures)
+}
+
+// correlated lists the resources that moved with latency across the windows:
+// the closest the data can honestly get to naming a bottleneck (PLAN-OUTLINE.md
+// §33).
+//
+// The section is hard to appear in, on purpose. A row needs enough windows to
+// compare, and it has to survive a permutation test; if nothing does, there is
+// no section rather than a table of coincidences. The caveat is printed with the
+// table rather than left to the reader to remember.
+func (p *printer) correlated(ws []metrics.Window, sys collect.Report, cfg *config.Config) {
+	rows := correlateRows(ws, sys, cfg)
+	if len(rows) == 0 {
+		return
+	}
+
+	pct, _ := featuredPercentile(cfg.Percentiles)
+	p.line("")
+	p.line("  " + p.paint(cBold, fmt.Sprintf("LIKELY CORRELATED (resource vs %s, strongest first)", formatP(pct))))
+	p.line("")
+	p.line("  " + p.paint(cBold, fmt.Sprintf("%-24s%9s%10s", "SERIES", "r", "WINDOWS")))
+	for _, row := range rows {
+		r := fmt.Sprintf("%+.2f", row.R)
+		if math.Abs(row.R) >= 0.7 {
+			r = p.paint(cYellow, r)
+		}
+		p.line(fmt.Sprintf("  %-24s%9s%10d", truncate(row.Series, 24), r, row.Windows))
+	}
+	p.line("")
+	p.line("  " + p.paint(cDim, "Rank correlation of each series against latency across the windows,"))
+	p.line("  " + p.paint(cDim, "within one measurement so a constant rate cannot manufacture it."))
+	p.line("  " + p.paint(cDim, "Every row survives a permutation test, with the bar raised for the number"))
+	p.line("  " + p.paint(cDim, "of series compared. Correlation is not cause."))
 }
 
 // collectorIssues lists what a collector could not read. It is a warning, not a

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -61,6 +62,10 @@ type htmlPage struct {
 	System       []systemRow
 	SystemNote   string
 	SystemIssues []string
+
+	// Correlated ranks the series that moved with latency across the windows.
+	Correlated     []htmlCorrelation
+	CorrelatedNote string
 
 	Failures  []results.Failure
 	Generator *results.GeneratorStatus
@@ -123,6 +128,50 @@ type htmlDrift struct {
 	// Flag marks a request whose worst window was materially worse than its
 	// run-wide latency, which is the one worth looking at.
 	Flag bool
+}
+
+// htmlCorrelation is one row of the resource-vs-latency ranking.
+type htmlCorrelation struct {
+	Series  string
+	R       string
+	Windows int
+	// Flag marks a relationship strong enough to be worth looking at.
+	Flag bool
+}
+
+// correlationSection ranks the collected series by how closely they moved with
+// latency, and describes the test they had to pass to appear at all.
+func correlationSection(ws []metrics.Window, sys collect.Report, cfg *config.Config) ([]htmlCorrelation, string) {
+	rows := correlateRows(ws, sys, cfg)
+	if len(rows) == 0 {
+		return nil, ""
+	}
+
+	out := make([]htmlCorrelation, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, htmlCorrelation{
+			Series:  row.Series,
+			R:       fmt.Sprintf("%+.2f", row.R),
+			Windows: row.Windows,
+			Flag:    math.Abs(row.R) >= 0.7,
+		})
+	}
+	return out, correlationNote(cfg)
+}
+
+// correlationNote states the two things a reader needs to not over-read the
+// table: what r measures here, and that it is not cause.
+func correlationNote(cfg *config.Config) string {
+	pct, ok := featuredPercentile(cfg.Percentiles)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Rank correlation of each series against %s across the windows, within one "+
+			"measurement so a constant arrival rate cannot manufacture the relationship. "+
+			"Every row survives a permutation test, with the bar raised for the number of "+
+			"series compared. Correlation is not cause.",
+		formatP(pct))
 }
 
 // driftSection renders the per-request window attribution, worst first.
@@ -218,6 +267,7 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 	page.System = systemRows(r.System)
 	page.SystemNote = systemNote(cfg)
 	page.SystemIssues = systemIssues(r.System)
+	page.Correlated, page.CorrelatedNote = correlationSection(r.Windows, r.System, cfg)
 	return renderHTML(w, page)
 }
 
@@ -352,6 +402,7 @@ func RenderCapacityHTML(w io.Writer, cfg *config.Config, out *search.Outcome, ve
 	page.System = systemRows(decidingSystem(out))
 	page.SystemNote = systemNote(cfg)
 	page.SystemIssues = systemIssues(decidingSystem(out))
+	page.Correlated, page.CorrelatedNote = correlationSection(decidingWindows(out), decidingSystem(out), cfg)
 	page.Status = statusFacts(decidingMetrics(out))
 	page.StatusHint = statusHint(decidingMetrics(out).StatusClasses)
 	return renderHTML(w, page)
