@@ -36,6 +36,16 @@ const (
 	exitSigint = 130
 )
 
+// exitHelp is what a command returns after printing its own usage. It is not an
+// exit code: run translates it to a success, because asking for help is not a
+// failure.
+//
+// It exists because "printed the usage" and "did the work" are different
+// outcomes that both have nothing to report, and conflating them either crashed
+// (compare indexed an empty argument list) or produced a spurious error after
+// the usage (run and capacity reported a missing config).
+const exitHelp = -1
+
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
@@ -43,6 +53,15 @@ func run(args []string) int {
 		usage(os.Stderr)
 		return exitError
 	}
+	code := dispatch(args)
+	if code == exitHelp {
+		return exitPass
+	}
+	return code
+}
+
+// dispatch routes a command to its handler.
+func dispatch(args []string) int {
 	switch args[0] {
 	case "run", "fixed":
 		return runCommand(args[1:])
@@ -247,7 +266,7 @@ func parseFlags(fs *flag.FlagSet, args []string, configPath *string) int {
 	for {
 		if err := fs.Parse(remaining); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
-				return exitPass
+				return exitHelp
 			}
 			return exitError
 		}

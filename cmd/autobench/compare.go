@@ -118,7 +118,7 @@ func compareArgs(fs *flag.FlagSet, args []string) ([]string, int) {
 	for {
 		if err := fs.Parse(remaining); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
-				return nil, exitPass
+				return nil, exitHelp
 			}
 			return nil, exitError
 		}
