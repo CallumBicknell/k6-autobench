@@ -290,28 +290,95 @@ func TestDockerReportsAnUnreachableDaemon(t *testing.T) {
 	}
 }
 
-// TestDockerSocketResolution follows the docker CLI's own convention, so an
+// TestDockerEndpointResolution follows the docker CLI's own convention, so an
 // environment already set up for docker works unchanged.
-func TestDockerSocketResolution(t *testing.T) {
-	t.Setenv("DOCKER_HOST", "")
-
-	if got := (&Docker{}).socket(); got != DefaultDockerSocket {
-		t.Errorf("socket = %q, want %q", got, DefaultDockerSocket)
+//
+// The tcp:// cases are the point. This test used to assert that a tcp:// host was
+// "passed through" to the unix dialer, on the reasoning that the failure would
+// then name the host. It does not: dialing "tcp://1.2.3.4:2375" as a path reports
+// "no such file or directory", which names a file that was never meant to exist
+// and points at nothing the reader can change.
+func TestDockerEndpointResolution(t *testing.T) {
+	tests := []struct {
+		name        string
+		env         string
+		socket      string
+		wantNetwork string
+		wantAddress string
+		wantErr     string
+	}{
+		{
+			name: "no environment at all", wantNetwork: "unix",
+			wantAddress: DefaultDockerSocket,
+		},
+		{
+			name: "an explicit socket wins over the environment",
+			env:  "unix:///env.sock", socket: "/custom.sock",
+			wantNetwork: "unix", wantAddress: "/custom.sock",
+		},
+		{
+			name: "a unix DOCKER_HOST", env: "unix:///env.sock",
+			wantNetwork: "unix", wantAddress: "/env.sock",
+		},
+		{
+			name: "a bare path is a socket", env: "/var/run/docker.sock",
+			wantNetwork: "unix", wantAddress: "/var/run/docker.sock",
+		},
+		{
+			name: "a tcp DOCKER_HOST", env: "tcp://1.2.3.4:2375",
+			wantNetwork: "tcp", wantAddress: "1.2.3.4:2375",
+		},
+		{
+			name: "an http DOCKER_HOST", env: "http://1.2.3.4:2375",
+			wantNetwork: "tcp", wantAddress: "1.2.3.4:2375",
+		},
+		{
+			name: "a scheme autobench cannot speak", env: "ssh://host",
+			wantErr: "unsupported DOCKER_HOST scheme",
+		},
 	}
-	if got := (&Docker{Socket: "/custom.sock"}).socket(); got != "/custom.sock" {
-		t.Errorf("socket = %q, want the configured path", got)
-	}
 
-	t.Setenv("DOCKER_HOST", "unix:///env.sock")
-	if got := (&Docker{}).socket(); got != "/env.sock" {
-		t.Errorf("socket = %q, want the env var honoured", got)
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DOCKER_HOST", tc.env)
 
-	// A tcp:// daemon is a different transport; the host is passed through so
-	// the failure names it rather than looking like a missing file.
-	t.Setenv("DOCKER_HOST", "tcp://1.2.3.4:2375")
-	if got := (&Docker{}).socket(); got != "tcp://1.2.3.4:2375" {
-		t.Errorf("socket = %q, want the unsupported host passed through", got)
+			got, err := (&Docker{Socket: tc.socket}).endpoint()
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("endpoint = %+v, want an error", got)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("endpoint: %v", err)
+			}
+			if got.network != tc.wantNetwork || got.address != tc.wantAddress {
+				t.Errorf("endpoint = %s %s, want %s %s",
+					got.network, got.address, tc.wantNetwork, tc.wantAddress)
+			}
+		})
+	}
+}
+
+// TestDockerUnsupportedSchemeSurfacesAsACollectorProblem: a configuration error
+// reaches the report through the same path as a connection failure, rather than
+// panicking or failing the run.
+func TestDockerUnsupportedSchemeSurfacesAsACollectorProblem(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "ssh://host")
+
+	d := &Docker{Source: "api", Container: "whatever", Interval: time.Millisecond}
+	stop := d.Start(context.Background())
+	time.Sleep(20 * time.Millisecond)
+	rep := stop()
+
+	if len(rep.Failures) == 0 {
+		t.Fatal("no failure reported, want the scheme error surfaced")
+	}
+	if !strings.Contains(rep.Failures[0].Error, "unsupported DOCKER_HOST scheme") {
+		t.Errorf("failure = %v, want the scheme error", rep.Failures[0])
 	}
 }
 

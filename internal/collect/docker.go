@@ -225,36 +225,79 @@ func (d *Docker) timeout() time.Duration {
 	return DefaultTimeout
 }
 
-// client returns a client that talks to the daemon over its unix socket.
+// endpoint is how the daemon is reached: a unix socket or a TCP address.
+type endpoint struct {
+	network string // "unix" or "tcp"
+	address string
+}
+
+// endpoint resolves where the daemon is, following the same convention as the
+// docker CLI so a configured environment works unchanged.
+//
+// The scheme matters and is not decoration. DOCKER_HOST is commonly set to
+// tcp://host:2375 on a machine whose daemon does not use a socket at all, and
+// dialing that string as a path fails with "dial unix tcp://...: no such file or
+// directory" -- an error that names neither the cause nor the setting.
+func (d *Docker) endpoint() (endpoint, error) {
+	raw := strings.TrimSpace(d.Socket)
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("DOCKER_HOST"))
+	}
+	if raw == "" {
+		return endpoint{network: "unix", address: DefaultDockerSocket}, nil
+	}
+
+	for _, prefix := range []string{"unix://", "npipe://"} {
+		if path, ok := strings.CutPrefix(raw, prefix); ok {
+			return endpoint{network: "unix", address: path}, nil
+		}
+	}
+	for _, prefix := range []string{"tcp://", "http://"} {
+		if addr, ok := strings.CutPrefix(raw, prefix); ok {
+			return endpoint{network: "tcp", address: addr}, nil
+		}
+	}
+	if strings.Contains(raw, "://") {
+		return endpoint{}, fmt.Errorf(
+			"unsupported DOCKER_HOST scheme in %q: autobench reaches the daemon over a "+
+				"unix socket or tcp; set socket explicitly or use unix:// or tcp://", raw)
+	}
+
+	// A bare path is what a socket setting looks like, which is the common case.
+	return endpoint{network: "unix", address: raw}, nil
+}
+
+// client returns a client that talks to the daemon over its endpoint.
 func (d *Docker) client() *http.Client {
 	if d.HTTP != nil {
 		return d.HTTP
 	}
-	socket := d.socket()
+	ep, err := d.endpoint()
+	if err != nil {
+		// The error surfaces as a collector problem on the first poll, which is
+		// where every other connection failure is reported. A client that fails
+		// every call carries it there.
+		return &http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, err
+			}),
+			Timeout: d.timeout(),
+		}
+	}
 	return &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var dialer net.Dialer
-				return dialer.DialContext(ctx, "unix", socket)
+				return dialer.DialContext(ctx, ep.network, ep.address)
 			},
 		},
 		Timeout: d.timeout(),
 	}
 }
 
-// socket is the daemon's socket path, following the same convention as the
-// docker CLI so a configured environment works unchanged.
-func (d *Docker) socket() string {
-	if d.Socket != "" {
-		return d.Socket
-	}
-	if host := strings.TrimSpace(os.Getenv("DOCKER_HOST")); host != "" {
-		if path, ok := strings.CutPrefix(host, "unix://"); ok {
-			return path
-		}
-		// A tcp:// daemon is a different transport, and quietly treating it as a
-		// path would fail later with a confusing error.
-		return host
-	}
-	return DefaultDockerSocket
-}
+// roundTripFunc adapts a function to http.RoundTripper, so a configuration error
+// can be reported through the same path as a connection failure.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+// RoundTrip implements http.RoundTripper.
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
