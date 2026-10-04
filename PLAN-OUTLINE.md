@@ -20,8 +20,8 @@
 >   breakdown, so a spike is attributed to the request that caused it.
 > - **V0.8 — done.** Resource collectors (the first half of §33): a Prometheus
 >   collector behind a `collectors:` block, sampling the system under test while
->   it is loaded, with the readings reported alongside the latency they caused.
->   (`internal/collect`.)
+>   it is loaded, with the readings reported alongside the latency they caused and
+>   the resources that moved with it ranked. (`internal/collect`.)
 >
 > Still open: the remaining collectors of §33 — Docker, Kubernetes, system — on
 > the abstraction V0.8 put in place, and generator CPU/memory from §30.
@@ -1909,8 +1909,43 @@ result model or the renderers:
 The report gained a `SYSTEM` section showing min, max, average and the peak
 offset per series, in both the terminal and the HTML report.
 
-Docker, Kubernetes and system collectors, and the "likely correlated saturation"
-summary above, are still to come.
+## What V0.8 added to it
+
+The "likely correlated saturation" line above, built honestly. Rather than
+inventing a heuristic, the report computes the rank correlation between each
+collected series and the per-window latency, and shows the series that survive a
+permutation test:
+
+```text
+  LIKELY CORRELATED (resource vs p95, strongest first)
+
+  SERIES                          r   WINDOWS
+  postgres connections        +0.97         9
+```
+
+What makes that a claim worth reading:
+
+- **Within one measurement.** The arrival rate is constant there, so a resource
+  cannot correlate with latency merely by rising with load. Across rates, every
+  resource would.
+- **Rank correlation.** A resource that climbs 20% while latency triples is still
+  moving together; one bad window would otherwise dominate a product-moment
+  correlation.
+- **A permutation test.** A handful of windows is where the normal approximation
+  is worst, and shuffling assumes nothing about either series. It handles the
+  ties a saturated pool produces, which the textbook rank-correlation tables do
+  not. The shuffle is seeded from the data, so a report stays reproducible.
+- **A bar that rises with the number of series compared**, at `0.05/n`. Testing a
+  dozen resources is a dozen chances of a coincidence.
+
+It is also deliberately hard to appear in: a series needs at least five windows
+holding both readings, and the section is absent rather than padded when nothing
+qualifies. Six windows carries little power, so a wide config may show nothing at
+all — the honest answer for six data points, and a narrower `analysis.window`
+buys more of them. The caveat that correlation is not cause is printed with the
+table.
+
+Docker, Kubernetes and system collectors are still to come, on this abstraction.
 
 ---
 

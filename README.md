@@ -410,6 +410,53 @@ Collectors run for **every** measurement: the fixed run, each search probe and
 the validation run. The capacity report shows the deciding measurement's
 readings (the validation run, or the last passing probe).
 
+### Which resource is the bottleneck
+
+The SYSTEM table says what the system was doing. With windowed analysis on, the
+report also says which of it moved with the latency:
+
+```
+  LIKELY CORRELATED (resource vs p95, strongest first)
+
+  SERIES                          r   WINDOWS
+  postgres connections        +0.97         9
+```
+
+A live run: the target slowed from 7.5ms to 24.7ms per window, and Postgres
+connections climbed from 104 to 456 alongside it. Two other series were
+collected and left out — one oscillating on a period unrelated to the ramp, one
+pinned flat.
+
+Three things make that worth reading rather than noise:
+
+- **Rank correlation, not raw.** A resource that climbs 20% while latency
+  triples is still moving together, and one bad window would otherwise drag a
+  product-moment correlation down on its own.
+- **A permutation test, not a formula.** A handful of windows is exactly where
+  the normal approximation is worst, and shuffling assumes nothing about the
+  shape of either series. It also handles the ties a saturated pool produces.
+  The shuffle is seeded from the data, so a report is reproducible.
+- **The bar rises with the number of series compared.** Testing a dozen
+  resources is a dozen chances of a coincidence, so a series has to clear
+  `0.05/n`.
+
+The comparison is made **within one measurement**, where the arrival rate is
+constant. Across rates, every resource rises with load and would correlate with
+latency for that reason alone.
+
+`r` is negative when a resource falls as latency rises, which is as worth seeing
+as a rise — a cache hit rate collapsing, say.
+
+**It is deliberately hard to appear in.** A series needs at least five windows
+holding both a latency reading and one of its own, and the section is absent
+rather than padded when nothing qualifies. That has a real cost: six windows
+carries little statistical power, so a wide config may show nothing. It is the
+honest answer for six data points, and a narrower `analysis.window` buys more of
+them — a 60s probe at a 5s window gives twelve pairings instead of six.
+
+The caveat is printed with the table rather than left to the reader to remember:
+correlation is not cause. What it offers is a shortlist, not a verdict.
+
 ## Configuration
 
 ```yaml
