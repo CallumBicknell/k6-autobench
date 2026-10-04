@@ -1,0 +1,10 @@
+# Keep the build context to what the build actually reads.
+.git
+.github
+bin
+results
+graft
+.claude
+*.md
+Dockerfile
+.dockerignore

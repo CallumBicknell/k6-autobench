@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt tidy run clean
+.PHONY: build test vet fmt tidy run image clean
 
 BIN := bin/autobench
 
@@ -19,6 +19,10 @@ tidy:
 
 run: build
 	./$(BIN) run examples/api.yaml
+
+# Build the container, which ships the orchestrator and the generator together.
+image:
+	docker build -t autobench .
 
 clean:
 	rm -rf bin

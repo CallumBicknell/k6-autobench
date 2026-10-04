@@ -1,0 +1,91 @@
+# Gate a pull request on performance.
+#
+# Copy this to .github/workflows/benchmark.yml and replace the two steps marked
+# "yours": how your service starts, and the config that describes your workload.
+#
+# The shape is the whole point of `autobench compare`: a capacity search on the
+# PR branch is a measurement, and only a comparison against a known-good baseline
+# says whether the change made things worse. A baseline is a committed file, so
+# updating it is a reviewed change like any other.
+name: benchmark
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push supersedes an in-flight run.
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # so a wedged run cannot hold a runner for hours
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # k6 is the generator autobench drives, and is deliberately not vendored.
+      - uses: grafana/setup-k6-action@v1
+        with:
+          k6-version: "2.1.0"
+
+      - name: Build autobench
+        run: go build -o bin/autobench ./cmd/autobench
+
+      # ---- yours: start the service under test ------------------------------
+      # It must be warm before the search starts, or the first probes measure
+      # your startup rather than your steady state.
+      - name: Start the service under test
+        run: |
+          docker compose up -d --wait
+          ./scripts/wait-for.sh http://localhost:3000/health
+
+      # ---- yours: the workload ---------------------------------------------
+      # Tune the thresholds in examples/api-capacity.yaml to what your service
+      # promises. A search against no SLO measures nothing in particular.
+      - name: Search for capacity
+        run: |
+          ./bin/autobench capacity examples/api-capacity.yaml \
+            --json candidate.json \
+            --out-dir results/
+
+      # ---- the gate --------------------------------------------------------
+      # The baseline lives on the default branch. Without one the job warns
+      # rather than passing silently, so a fresh repository is not broken and
+      # a missing baseline is not mistaken for a passing gate.
+      - name: Compare with the baseline
+        run: |
+          if [ ! -f benchmarks/baseline.json ]; then
+            echo "::warning title=No baseline::benchmarks/baseline.json is missing, so nothing was compared. Run the search on the default branch and commit its --json output."
+            exit 0
+          fi
+          ./bin/autobench compare benchmarks/baseline.json candidate.json \
+            --json results/compare.json \
+            --html results/compare.html
+
+      # Always, so a failed gate still leaves the evidence behind.
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ github.sha }}
+          path: results/
+          if-no-files-found: warn
+
+      # On the default branch, refresh the baseline from this run. Committing it
+      # keeps the comparison honest: the number a PR is judged against is a
+      # reviewed change rather than whatever the last pipeline happened to leave.
+      - name: Refresh the baseline
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          mkdir -p benchmarks
+          cp candidate.json benchmarks/baseline.json
+          if ! git diff --quiet -- benchmarks/baseline.json; then
+            echo "::notice::capacity changed; commit benchmarks/baseline.json to make it the new baseline"
+          fi
