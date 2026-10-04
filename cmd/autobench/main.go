@@ -48,6 +48,8 @@ func run(args []string) int {
 		return runCommand(args[1:])
 	case "capacity", "search":
 		return capacityCommand(args[1:])
+	case "compare":
+		return compareCommand(args[1:])
 	case "version", "--version", "-v":
 		fmt.Printf("autobench %s\n", version)
 		return exitPass
@@ -412,17 +414,20 @@ Usage:
   autobench run [flags] [config.yaml]
   autobench run bench.yaml --rate 5000 --duration 2m
   autobench capacity [flags] [config.yaml]
+  autobench compare [flags] baseline.json candidate.json
   autobench version
 
 Commands:
   run        Run a fixed-rate load test and report the result (alias: fixed)
   capacity   Search for the maximum sustainable iteration rate (alias: search)
+  compare    Compare two recorded runs and fail on a regression
   version    Print the autobench version
   help       Show this help
 
 Exit codes:
   0  all thresholds passed
-  1  a threshold failed, no capacity was found, or the load generator saturated
+  1  a threshold failed, no capacity was found, a regression was found, or the
+     load generator saturated
   2  usage or runtime error
 
 `, version)

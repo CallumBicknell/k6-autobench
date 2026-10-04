@@ -441,17 +441,7 @@ func renderChart(out *search.Outcome, cfg *config.Config) string {
 // decidingResult picks the measurement the report describes: the validation run
 // when there is one, otherwise the last passing probe. It returns nil when the
 // search never passed anything.
-func decidingResult(out *search.Outcome) *results.Result {
-	if out.Validation != nil {
-		return &out.Validation.Result
-	}
-	for i := len(out.Probes) - 1; i >= 0; i-- {
-		if out.Probes[i].Pass {
-			return &out.Probes[i].Result
-		}
-	}
-	return nil
-}
+func decidingResult(out *search.Outcome) *results.Result { return out.Deciding() }
 
 // decidingMetrics is decidingResult for the endpoint breakdown.
 func decidingMetrics(out *search.Outcome) metrics.Metrics {

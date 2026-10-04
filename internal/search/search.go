@@ -163,3 +163,21 @@ func (o *Outcome) Verdict() results.Verdict {
 
 // Pass reports whether the search produced a usable, passing capacity estimate.
 func (o *Outcome) Pass() bool { return o.Verdict().OK() }
+
+// Deciding returns the measurement the search's own numbers describe: the
+// validation run when there is one, otherwise the last passing probe.
+//
+// It is the measurement a report should quote, because it is the one that either
+// confirmed the capacity or stood as the best the search found. It returns nil
+// when nothing passed.
+func (o *Outcome) Deciding() *results.Result {
+	if o.Validation != nil {
+		return &o.Validation.Result
+	}
+	for i := len(o.Probes) - 1; i >= 0; i-- {
+		if o.Probes[i].Pass {
+			return &o.Probes[i].Result
+		}
+	}
+	return nil
+}
