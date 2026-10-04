@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -201,6 +202,60 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 	return exitFail
 }
 
+// probeFileRE matches the names writeArtifacts gives per-probe files. Anything
+// not matching is not autobench's to delete.
+var probeFileRE = regexp.MustCompile(`^\d{3}-[a-z]+-\d+\.json$`)
+
+// artifactNames are the files autobench owns at the top of an --out-dir.
+var artifactNames = []string{"config.yaml", "manifest.json", "summary.json", "report.html"}
+
+// clearStaleArtifacts removes what an earlier run into the same directory left
+// behind.
+//
+// --out-dir is where one run's artefacts go, and a directory holding some of this
+// run and some of a previous one is worse than either: the manifest and summary
+// are overwritten, so nothing on disk says the extras do not belong. A run with
+// fewer probes than its predecessor used to leave the surplus behind, and a run
+// with no config path used to leave the previous config.yaml next to a manifest
+// that did not come from it.
+//
+// Only the names autobench writes are removed. Anything else the directory holds
+// is left alone, because pointing --out-dir at a directory that already has
+// something in it should not be destructive.
+func clearStaleArtifacts(dir string) error {
+	for _, name := range artifactNames {
+		if err := removeIfPresent(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
+
+	probeDir := filepath.Join(dir, "probes")
+	entries, err := os.ReadDir(probeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !probeFileRE.MatchString(e.Name()) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(probeDir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeIfPresent deletes a file, treating absence as success.
+func removeIfPresent(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // writeArtifacts persists a search so it can be re-read and diffed later
 // (PLAN-OUTLINE.md §26): the source config, a manifest, one file per probe, a
 // compact summary and the HTML report.
@@ -208,6 +263,9 @@ func writeArtifacts(dir, configPath string, rep *capacityReport, cfg *config.Con
 	probeDir := filepath.Join(dir, "probes")
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", probeDir, err)
+	}
+	if err := clearStaleArtifacts(dir); err != nil {
+		return fmt.Errorf("clear %s: %w", dir, err)
 	}
 
 	if configPath != "" {
@@ -223,8 +281,8 @@ func writeArtifacts(dir, configPath string, rep *capacityReport, cfg *config.Con
 	if err := writeJSONFile(filepath.Join(dir, "manifest.json"), rep); err != nil {
 		return err
 	}
-	if rep.Outcome != nil {
-		for _, p := range rep.Outcome.Probes {
+	if out != nil {
+		for _, p := range out.Probes {
 			name := fmt.Sprintf("%03d-%s-%d.json", p.Index, p.Phase, p.Rate)
 			if err := writeJSONFile(filepath.Join(probeDir, name), p); err != nil {
 				return err
