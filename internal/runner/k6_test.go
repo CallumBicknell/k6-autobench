@@ -153,8 +153,13 @@ func TestBuildEnvLeavesTLSSettingsAloneByDefault(t *testing.T) {
 	if got := envValue(t, env, "AUTOBENCH_INSECURE_TLS"); got != "false" {
 		t.Errorf("AUTOBENCH_INSECURE_TLS = %q, want false", got)
 	}
-	if got := envValue(t, env, "AUTOBENCH_REQUEST_TIMEOUT"); got != "0s" {
-		t.Errorf("AUTOBENCH_REQUEST_TIMEOUT = %q, want 0s (k6's own default)", got)
+	// The variable has to be absent, not "0s": k6 reads "0s" as a deadline that
+	// has already passed, so setting it would time every request out at once.
+	// That is not a hypothetical -- it is what shipped before this test existed.
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "AUTOBENCH_REQUEST_TIMEOUT=") {
+			t.Errorf("a request timeout was passed without one being configured: %s", kv)
+		}
 	}
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "SSL_CERT_FILE=") {

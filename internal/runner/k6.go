@@ -373,8 +373,14 @@ func buildEnv(spec Spec, summaryPath string) ([]string, error) {
 		"AUTOBENCH_WORKLOAD="+string(workloadJSON),
 		"AUTOBENCH_SUMMARY_PATH="+summaryPath,
 		"AUTOBENCH_INSECURE_TLS="+strconv.FormatBool(spec.InsecureTLS),
-		"AUTOBENCH_REQUEST_TIMEOUT="+spec.RequestTimeout.String(),
 	)
+	// Only set when there is one. k6 reads "0s" as a deadline that has already
+	// passed rather than as no deadline, so an always-present variable would time
+	// every request out immediately -- which is exactly what happened when this
+	// was set unconditionally.
+	if spec.RequestTimeout > 0 {
+		env = append(env, "AUTOBENCH_REQUEST_TIMEOUT="+spec.RequestTimeout.String())
+	}
 	// k6 reads the trust store from SSL_CERT_FILE, so a private CA is passed the
 	// way k6 itself expects rather than through the script.
 	if ca := strings.TrimSpace(spec.CAFile); ca != "" {
