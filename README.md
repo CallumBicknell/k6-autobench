@@ -7,7 +7,7 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.8** — `autobench run` (fixed rate) and `autobench capacity`
+> **Status: V0.9** — `autobench run` (fixed rate) and `autobench capacity`
 > (adaptive search) over weighted request pools or multi-step journeys, with
 > per-endpoint and response-class breakdowns, windowed latency analysis that
 > attributes a spike to the request that caused it, resource collectors that

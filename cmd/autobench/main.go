@@ -26,7 +26,7 @@ import (
 	"github.com/callum/k6-autobench/internal/runner"
 )
 
-const version = "0.8.0"
+const version = "0.9.0"
 
 // Exit codes.
 const (
