@@ -493,10 +493,20 @@ the run as a whole does. Without it the window table is still reported, so the
 spike is visible even when the verdict is lenient.
 
 Windowed analysis is off by default because it costs a sample file proportional
-to `rate × duration` — k6 has to stream every sample to disk for it. Windows
-with no traffic are reported as empty rather than skipped, and if a window holds
-more samples than are retained its percentiles come from a prefix and the report
-says so.
+to the number of requests — k6 has to stream every sample to disk for it. Measured
+against this project's own workload script, that is **about 3 KB per request**: a
+ten-minute run at 10,000 iterations/s writes roughly 16 GB. autobench prints an
+estimate before a windowed run starts, because the cost is invisible until the
+disk fills:
+
+```text
+autobench: windowed analysis (analysis.window 10s) streams every sample to disk:
+  about 1.2MiB per probe, up to 5 probes
+```
+
+Windows with no traffic are reported as empty rather than skipped, and if a window
+holds more samples than are retained its percentiles come from a prefix and the
+report says so.
 
 Both the terminal and HTML reports gain a latency-over-time chart with the same
 SLO line as the rate/latency chart.

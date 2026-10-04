@@ -136,6 +136,10 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 
 	fmt.Fprintf(os.Stderr, "autobench: searching for capacity against %s (start %d/s, probe %s)\n",
 		cfg.Target.BaseURL, cfg.Search.StartRate, cfg.Search.ProbeDuration)
+	if notice := windowNotice(cfg, cfg.Search.StartRate, cfg.Search.ProbeDuration.Duration,
+		cfg.Search.MaxProbes); notice != "" {
+		fmt.Fprintf(os.Stderr, "autobench: %s\n", notice)
+	}
 
 	started := time.Now()
 	out, runErr := ctrl.Run(ctx)

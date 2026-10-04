@@ -179,6 +179,9 @@ func runCommand(args []string) int {
 	if notice := collectorNotice(cfg); notice != "" {
 		fmt.Fprintf(os.Stderr, "autobench: sampling %s\n", notice)
 	}
+	if notice := windowNotice(cfg, cfg.Run.Rate, cfg.Run.Duration.Duration, 1); notice != "" {
+		fmt.Fprintf(os.Stderr, "autobench: %s\n", notice)
+	}
 
 	r := &runner.Runner{K6Path: k6Path, ScriptPath: scriptPath}
 	spec := runner.Spec{
