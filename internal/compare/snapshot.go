@@ -26,37 +26,37 @@ import (
 // left at their zero value, and Comparable says which parts can be compared.
 type Snapshot struct {
 	// Path is the file this came from, so a report can name its inputs.
-	Path string
+	Path string `json:"path"`
 	// Kind is what produced it: "fixed-rate run" or "capacity search".
-	Kind string
+	Kind string `json:"kind"`
 	// Name and Target identify what was measured.
-	Name   string
-	Target string
+	Name   string `json:"name"`
+	Target string `json:"target"`
 
 	// Verdict is the run's own conclusion.
-	Verdict results.Verdict
+	Verdict results.Verdict `json:"verdict"`
 
 	// Rate is the fixed run's iteration rate, and is zero for a search.
-	Rate int
+	Rate int `json:"rate"`
 	// Duration is the fixed run's configured duration, or the deciding
 	// measurement's for a search.
-	Duration time.Duration
+	Duration time.Duration `json:"duration"`
 
 	// Capacity is the discovered capacity, and is zero for a fixed run.
-	Capacity int
+	Capacity int `json:"capacity"`
 	// CapacityIsLowerBound records a search that never found a failure boundary,
 	// so the capacity is a floor rather than a measurement.
-	CapacityIsLowerBound bool
+	CapacityIsLowerBound bool `json:"capacity_is_lower_bound,omitempty"`
 
-	// Metrics is the measurement's own numbers. For a search it is the deciding
-	// measurement's: the validation run when there is one, otherwise the last
-	// passing probe.
-	Metrics metrics.Metrics
+	// Metrics is the measurement's own numbers, including its per-request
+	// breakdown. For a search it is the deciding measurement's: the validation
+	// run when there is one, otherwise the last passing probe.
+	Metrics metrics.Metrics `json:"metrics"`
 
 	// GeneratorSaturated records that the load generator, not the target, was
 	// the bottleneck. A comparison against such a run says nothing about the
 	// system under test.
-	GeneratorSaturated bool
+	GeneratorSaturated bool `json:"generator_saturated,omitempty"`
 }
 
 // Kind values.

@@ -61,7 +61,7 @@ func RenderCompareHTML(w io.Writer, rep *compare.Report, version string, ranAt t
 		Candidate: rep.After.Path,
 		RanAt:     ranAt,
 		Tolerance: fmt.Sprintf("latency %s, capacity %s, errors %s",
-			pct(rep.Config.Latency), pct(rep.Config.Capacity), pct(rep.Config.Errors)),
+			pctTrimmed(rep.Config.Latency), pctTrimmed(rep.Config.Capacity), pctTrimmed(rep.Config.Errors)),
 		Verdict:     string(rep.Verdict),
 		Passed:      !rep.Regressed(),
 		Regressions: rep.Regressions,

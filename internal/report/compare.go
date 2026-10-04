@@ -23,7 +23,7 @@ func RenderCompare(w io.Writer, rep *compare.Report, version string, color bool)
 	p.kv("Baseline", rep.Before.Path)
 	p.kv("Candidate", rep.After.Path)
 	p.kv("Tolerance", fmt.Sprintf("latency %s, capacity %s, errors %s",
-		pct(rep.Config.Latency), pct(rep.Config.Capacity), pct(rep.Config.Errors)))
+		pctTrimmed(rep.Config.Latency), pctTrimmed(rep.Config.Capacity), pctTrimmed(rep.Config.Errors)))
 
 	p.line("")
 	p.separator()
@@ -83,18 +83,18 @@ func (p *printer) changeRows(changes []compare.Change, unit string) {
 
 // endpointChanges prints the per-request comparison, worst first.
 func (p *printer) endpointChanges(changes []compare.EndpointChange) {
-	p.line("  " + p.paint(cBold, fmt.Sprintf("%-20s%12s%12s%12s   %s",
+	p.line("  " + p.paint(cBold, fmt.Sprintf("%-20s%14s%14s%12s   %s",
 		"REQUEST", "BASELINE p95", "CANDIDATE p95", "CHANGE", "")))
 	for _, e := range changes {
 		switch {
 		case e.Added:
-			p.line(fmt.Sprintf("  %-20s%12s%12s%12s   %s",
+			p.line(fmt.Sprintf("  %-20s%14s%14s%12s   %s",
 				truncate(e.Name, 20), "-", "-", "-", p.paint(cDim, "added")))
 		case e.Removed:
-			p.line(fmt.Sprintf("  %-20s%12s%12s%12s   %s",
+			p.line(fmt.Sprintf("  %-20s%14s%14s%12s   %s",
 				truncate(e.Name, 20), "-", "-", "-", p.paint(cDim, "removed")))
 		default:
-			p.line(fmt.Sprintf("  %-20s%12s%12s%12s   %s",
+			p.line(fmt.Sprintf("  %-20s%14s%14s%12s   %s",
 				truncate(e.Name, 20),
 				ms(e.Before), ms(e.After),
 				formatSignedPercent(e.Percent, e.PercentMeaningful),

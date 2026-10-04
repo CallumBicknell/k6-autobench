@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -153,7 +154,53 @@ func TestCompareCommandEndToEnd(t *testing.T) {
 	})
 }
 
-// TestCompareCommandWritesArtifacts covers the JSON and HTML outputs.
+// pascalKeyRE finds a JSON object key in Go's default PascalCase, which is what
+// the output would fall back to if a struct field lost its tag.
+var pascalKeyRE = regexp.MustCompile(`"[A-Z][A-Za-z_]*":`)
+
+// TestCompareJSONUsesSnakeCase guards the shape of the --json output, which is a
+// public interface. A consumer reads these keys, and Go's default field names
+// would be inconsistent with every other result file autobench writes.
+func TestCompareJSONUsesSnakeCase(t *testing.T) {
+	dir := t.TempDir()
+	baseline := filepath.Join(dir, "baseline.json")
+	candidate := filepath.Join(dir, "candidate.json")
+	out := filepath.Join(dir, "compare.json")
+
+	if err := os.WriteFile(baseline, []byte(fixedResultJSON(t, 100)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(candidate, []byte(fixedResultJSON(t, 200)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	code := compareCommand([]string{baseline, candidate, "--no-color", "--json", out})
+	if code != exitFail {
+		t.Fatalf("code = %d, want %d for a 100%% regression", code, exitFail)
+	}
+
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, key := range []string{
+		"baseline", "candidate", "ran_at", "verdict", "regressed", "tolerance", "result",
+	} {
+		if _, ok := doc[key]; !ok {
+			t.Errorf("comparison json has no %q key: %s", key, raw)
+		}
+	}
+
+	// And nothing anywhere in it fell back to a Go field name.
+	if bad := pascalKeyRE.FindAllString(string(raw), -1); len(bad) > 0 {
+		t.Errorf("comparison json uses Go field names %v, want snake_case", bad)
+	}
+}
 func TestCompareCommandWritesArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	baseline := filepath.Join(dir, "baseline.json")

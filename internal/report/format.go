@@ -69,6 +69,12 @@ func pct(ratio float64) string {
 	return strconv.FormatFloat(ratio*100, 'f', 3, 64) + "%"
 }
 
+// pctTrimmed renders a ratio as a percentage without trailing zeros, which is how
+// a tolerance reads best: "10%", not "10.000%".
+func pctTrimmed(ratio float64) string {
+	return strconv.FormatFloat(ratio*100, 'f', -1, 64) + "%"
+}
+
 // formatP renders a percentile label, e.g. 99.9 -> "p99.9".
 func formatP(p float64) string { return "p" + strconv.FormatFloat(p, 'f', -1, 64) }
 

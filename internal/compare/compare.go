@@ -31,11 +31,11 @@ const (
 // Config is how much change counts as a regression.
 type Config struct {
 	// Latency is how much worse a latency percentile may get, as a fraction.
-	Latency float64
+	Latency float64 `json:"latency"`
 	// Capacity is how much capacity may drop, as a fraction.
-	Capacity float64
+	Capacity float64 `json:"capacity"`
 	// Errors is how much the error rate may rise, in absolute terms.
-	Errors float64
+	Errors float64 `json:"errors"`
 }
 
 // DefaultConfig is the tolerance set a comparison uses when nothing overrides
@@ -51,64 +51,66 @@ func DefaultConfig() Config {
 // Change is one metric, before and after.
 type Change struct {
 	// Metric names it, e.g. "p99" or "capacity".
-	Metric string
+	Metric string `json:"metric"`
 	// Unit is "ms", "ratio" or "iterations/s".
-	Unit string
+	Unit string `json:"unit"`
 	// Before and After are the two readings.
-	Before float64
-	After  float64
+	Before float64 `json:"before"`
+	After  float64 `json:"after"`
 	// Percent is the signed change as a fraction, e.g. 0.568 for +56.8%.
-	Percent float64
+	Percent float64 `json:"percent"`
 	// PercentMeaningful is false when Before is zero, where a percentage change
 	// is undefined rather than infinite.
-	PercentMeaningful bool
+	PercentMeaningful bool `json:"percent_meaningful"`
 	// Worse is true when the change is in the direction that matters: latency up,
 	// capacity down, errors up.
-	Worse bool
+	Worse bool `json:"worse"`
 	// Regression is Worse and beyond the configured tolerance.
-	Regression bool
+	Regression bool `json:"regression"`
 }
 
 // EndpointChange is one request's latency, before and after.
 type EndpointChange struct {
-	Name string
+	Name string `json:"name"`
 	// Before and After are the request's percentile readings.
-	Before, After float64
+	Before float64 `json:"before"`
+	After  float64 `json:"after"`
 	// Percent is the signed change, meaningless when Before is zero.
-	Percent           float64
-	PercentMeaningful bool
-	Worse             bool
-	Regression        bool
+	Percent           float64 `json:"percent"`
+	PercentMeaningful bool    `json:"percent_meaningful"`
+	Worse             bool    `json:"worse"`
+	Regression        bool    `json:"regression"`
 	// Added and Removed mark a request only one of the runs exercised, which is
 	// a change in the workload rather than a regression in it.
-	Added   bool
-	Removed bool
+	Added   bool `json:"added,omitempty"`
+	Removed bool `json:"removed,omitempty"`
 }
 
 // Report is what comparing two runs produced.
 type Report struct {
-	Before, After *Snapshot
-	Config        Config
+	Before *Snapshot `json:"before"`
+	After  *Snapshot `json:"after"`
+	Config Config    `json:"config"`
 
 	// Latency compares every percentile both runs collected.
-	Latency []Change
+	Latency []Change `json:"latency"`
 	// Capacity compares the two searches' findings, and is nil when the runs are
 	// not both searches.
-	Capacity *Change
+	Capacity *Change `json:"capacity,omitempty"`
 	// Errors compares the error rates.
-	Errors Change
+	Errors Change `json:"errors"`
 	// Endpoints compares each request both runs exercised, worst change first.
-	Endpoints []EndpointChange
+	Endpoints []EndpointChange `json:"endpoints,omitempty"`
 
 	// Verdict is VerdictRegression when anything regressed, otherwise the
 	// candidate run's own verdict: a comparison should not turn a passing run
 	// into a failing one, only notice when it got worse.
-	Verdict results.Verdict
+	Verdict results.Verdict `json:"verdict"`
 	// Regressions lists the metrics that breached their tolerance.
-	Regressions []string
+	Regressions []string `json:"regressions"`
 	// Notes are things a reader needs to know to read the numbers honestly:
 	// mismatched targets, mismatched rates, a run that saturated its generator.
-	Notes []string
+	Notes []string `json:"notes,omitempty"`
 }
 
 // Regressed reports whether the comparison found a regression.
@@ -128,13 +130,15 @@ func Compare(before, after *Snapshot, cfg Config) *Report {
 	rep.Endpoints = compareEndpoints(before, after, cfg)
 	rep.Notes = comparisonNotes(before, after)
 
+	// Collected in the order the report displays them, so the list reads as a
+	// summary of the sections below it rather than a different ordering of them.
+	if rep.Capacity != nil && rep.Capacity.Regression {
+		rep.Regressions = append(rep.Regressions, rep.Capacity.Metric)
+	}
 	for _, c := range rep.Latency {
 		if c.Regression {
 			rep.Regressions = append(rep.Regressions, c.Metric)
 		}
-	}
-	if rep.Capacity != nil && rep.Capacity.Regression {
-		rep.Regressions = append(rep.Regressions, rep.Capacity.Metric)
 	}
 	if rep.Errors.Regression {
 		rep.Regressions = append(rep.Regressions, rep.Errors.Metric)
@@ -332,7 +336,10 @@ func comparisonNotes(before, after *Snapshot) []string {
 			"one run is a %s and the other a %s; latency is comparable, capacity is not",
 			before.Kind, after.Kind))
 	}
-	if before.Rate != after.Rate {
+	// The rate warning belongs to fixed runs. Two searches decided their
+	// capacity at their own rate by construction, so warning that those differ
+	// would fire on every capacity change and mean nothing.
+	if !before.IsCapacity() && !after.IsCapacity() && before.Rate != after.Rate {
 		notes = append(notes, fmt.Sprintf(
 			"the runs used different rates (%d/s and %d/s); latency at one load says nothing about latency at another",
 			before.Rate, after.Rate))
