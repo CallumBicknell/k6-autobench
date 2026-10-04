@@ -363,11 +363,23 @@ func TestValidateNewCollectors(t *testing.T) {
 			wantErr: "name is required",
 		},
 		{
+			// An empty url is allowed: inside a cluster the collector falls back
+			// to the in-cluster service, and outside one it reports that it has
+			// nowhere to read from. The config package cannot tell which, so the
+			// check lives with the collector.
 			name: "a kubernetes source with no url",
 			mutate: func(c *Config) {
 				c.Collectors.Kubernetes = []KubernetesSource{{Name: "cluster"}}
 			},
-			wantErr: "has no url",
+			wantErr: "",
+		},
+		{
+			name: "a kubernetes url with no scheme",
+			mutate: func(c *Config) {
+				c.Collectors.Kubernetes = []KubernetesSource{
+					{Name: "cluster", URL: "example.com"}}
+			},
+			wantErr: "must include a scheme and host",
 		},
 		{
 			name: "a kubernetes url with no scheme or host",

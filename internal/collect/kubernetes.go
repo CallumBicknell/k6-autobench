@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,11 +65,72 @@ var _ Collector = (*Kubernetes)(nil)
 // Name implements Collector.
 func (k *Kubernetes) Name() string { return k.Source }
 
+// DefaultInClusterURL and DefaultInClusterCA are what a pod reaches the API
+// server through: the service Kubernetes puts in front of it, and the CA bundle
+// the kubelet mounts beside the token.
+const (
+	DefaultInClusterURL = "https://kubernetes.default.svc"
+	DefaultInClusterCA  = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+)
+
+// inCluster reports whether this process is running inside a cluster, which is
+// what a mounted service account directory means.
+//
+// It follows the token path rather than a constant of its own, so a test can put
+// a token somewhere and get the in-cluster behaviour -- and so the URL and the CA
+// cannot disagree with the token about whether this is a pod.
+func (k *Kubernetes) inCluster() bool {
+	info, err := os.Stat(filepath.Dir(k.tokenPath()))
+	return err == nil && info.IsDir()
+}
+
+// urlOrDefault is the API server to read from. Inside a cluster with nothing
+// configured, it is the in-cluster service, so a pod needs no URL at all.
+func (k *Kubernetes) urlOrDefault() string {
+	if k.URL != "" {
+		return k.URL
+	}
+	if k.inCluster() {
+		return DefaultInClusterURL
+	}
+	return ""
+}
+
+// resolveURL is the API server to read from, or an error naming the setting when
+// there is none to fall back on.
+//
+// The empty case is checked here rather than in the config because it depends on
+// where this process is running: the config package cannot tell whether a pod's
+// service account is mounted, and the collector can.
+func (k *Kubernetes) resolveURL() (string, error) {
+	if u := k.urlOrDefault(); u != "" {
+		return u, nil
+	}
+	return "", fmt.Errorf(
+		"no url to read from: set collectors.kubernetes.url, or run inside a cluster "+
+			"where the in-cluster service is used (no service account token is mounted at %s)",
+		DefaultServiceAccountToken)
+}
+
+// caOrDefault is the CA bundle to verify the API server against. Inside a cluster
+// it is the one mounted beside the token, which is what makes the in-cluster URL
+// work without being told to trust anything.
+func (k *Kubernetes) caOrDefault() string {
+	if k.CAFile != "" {
+		return k.CAFile
+	}
+	if k.inCluster() {
+		// The kubelet mounts the CA next to the token, so this follows whichever
+		// directory the token came from.
+		return filepath.Join(filepath.Dir(k.tokenPath()), "ca.crt")
+	}
+	return ""
+}
+
 // Start begins sampling in the background and returns the function that stops
 // it and reports what was seen.
 func (k *Kubernetes) Start(ctx context.Context) func() Report {
-	client, err := k.client()
-	if err != nil {
+	fail := func(err error) func() Report {
 		// A client that cannot be built will not build on the next tick either,
 		// so say so once rather than once per poll.
 		return func() Report {
@@ -76,9 +138,18 @@ func (k *Kubernetes) Start(ctx context.Context) func() Report {
 		}
 	}
 
+	target, err := k.resolveURL()
+	if err != nil {
+		return fail(err)
+	}
+	client, err := k.client()
+	if err != nil {
+		return fail(err)
+	}
+
 	return sample(ctx, k.Source, k.Interval, &kubernetesPoller{
 		client:    client,
-		url:       k.URL,
+		url:       target,
 		token:     k.token(),
 		namespace: k.Namespace,
 		selector:  k.Selector,
@@ -130,14 +201,15 @@ func (k *Kubernetes) client() (*http.Client, error) {
 		// The point of the setting: a cluster whose CA is not at hand is still
 		// worth measuring, and the user asked for it by name.
 		tlsConfig.InsecureSkipVerify = true //nolint:gosec
-	case k.CAFile != "":
-		pem, err := os.ReadFile(k.CAFile)
+	case k.caOrDefault() != "":
+		ca := k.caOrDefault()
+		pem, err := os.ReadFile(ca)
 		if err != nil {
 			return nil, fmt.Errorf("read ca_file: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("ca_file %s holds no certificates", k.CAFile)
+			return nil, fmt.Errorf("ca_file %s holds no certificates", ca)
 		}
 		tlsConfig.RootCAs = pool
 	}

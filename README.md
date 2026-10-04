@@ -609,12 +609,40 @@ collectors:
 
   kubernetes:
     - name: cluster-api
-      url: https://127.0.0.1:6443
+      url: https://127.0.0.1:6443  # omitted inside a cluster: the in-cluster service is used
       token: ""                      # defaults to $AUTOBENCH_K8S_TOKEN, then a mounted service account token
       namespace: bench
       selector: app=api
       insecure: true                 # or ca_file: /path/to/ca.pem, not both
 ```
+
+Inside a cluster, `url`, `ca_file` and `token` all default to the service account
+mount, so a pod needs nothing but a name:
+
+```yaml
+collectors:
+  kubernetes:
+    - name: api
+```
+
+It needs permission to read pod metrics, which is a `list` on `metrics.k8s.io`
+pods — verified against a real cluster, where `list` alone is enough:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: autobench-metrics
+rules:
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["list"]
+```
+
+The metrics API is not part of a default cluster: it comes from
+[metrics-server](https://github.com/kubernetes-sigs/metrics-server), which many
+clusters install for `kubectl top`. Without it the collector reports the API's
+absence rather than an empty reading.
 
 ```
   SYSTEM (sampled every 3s)

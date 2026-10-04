@@ -395,17 +395,21 @@ func (s *sourceNames) claim(kind, name string) error {
 }
 
 // validateKubernetesSource checks a cluster selection.
+//
+// An empty url is allowed: inside a cluster the collector falls back to the
+// in-cluster service, and outside one it says so with a message naming the
+// setting. It cannot be checked here, because the config package does not know
+// whether this process is a pod.
 func validateKubernetesSource(src KubernetesSource) error {
-	if strings.TrimSpace(src.URL) == "" {
-		return fmt.Errorf("collectors.kubernetes %q has no url", src.Name)
-	}
-	u, err := url.Parse(src.URL)
-	if err != nil {
-		return fmt.Errorf("collectors.kubernetes %q url %q is not valid: %w", src.Name, src.URL, err)
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("collectors.kubernetes %q url %q must include a scheme and host",
-			src.Name, src.URL)
+	if strings.TrimSpace(src.URL) != "" {
+		u, err := url.Parse(src.URL)
+		if err != nil {
+			return fmt.Errorf("collectors.kubernetes %q url %q is not valid: %w", src.Name, src.URL, err)
+		}
+		if u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("collectors.kubernetes %q url %q must include a scheme and host",
+				src.Name, src.URL)
+		}
 	}
 	if src.Insecure && src.CAFile != "" {
 		return fmt.Errorf("collectors.kubernetes %q sets both insecure and ca_file; "+
