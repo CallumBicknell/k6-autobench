@@ -186,11 +186,17 @@ func observe(ctx context.Context, collectors []collect.Collector) func() collect
 	}
 
 	return func() collect.Report {
-		var out collect.Report
+		reports := make([]collect.Report, len(stops))
 		// Stop in reverse, so the observation windows nest around the
 		// measurement rather than one source cutting another short.
 		for i := len(stops) - 1; i >= 0; i-- {
-			out.Merge(stops[i]())
+			reports[i] = stops[i]()
+		}
+		// Merge in start order, so the report lists sources in the order they
+		// were configured rather than the order they happened to stop.
+		var out collect.Report
+		for _, r := range reports {
+			out.Merge(r)
 		}
 		return out
 	}

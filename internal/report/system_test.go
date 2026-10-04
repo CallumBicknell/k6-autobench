@@ -285,6 +285,20 @@ func TestPeakAt(t *testing.T) {
 	}
 }
 
+// TestPeakCellLeavesAFlatSeriesUnmarked: a series that never moved has no peak
+// to point at, and an offset of a few milliseconds would only suggest one.
+func TestPeakCellLeavesAFlatSeriesUnmarked(t *testing.T) {
+	flat := collect.Stats{Min: 499, Max: 499, Avg: 499, MaxAtMs: 6.8, Count: 5}
+	if got := peakCell(flat); got != "—" {
+		t.Errorf("peakCell(flat) = %q, want the unmarked dash", got)
+	}
+
+	moved := collect.Stats{Min: 120, Max: 499, Avg: 300, MaxAtMs: 9000, Count: 5}
+	if got := peakCell(moved); got != "9s" {
+		t.Errorf("peakCell(moved) = %q, want %q", got, "9s")
+	}
+}
+
 // TestSystemRowsLeavesUnreadableSeriesUnformatted keeps systemRows honest about
 // a series it cannot summarise.
 func TestSystemRowsLeavesUnreadableSeriesUnformatted(t *testing.T) {
@@ -358,4 +372,32 @@ func TestCapacityReportCarriesTheSystemSection(t *testing.T) {
 			t.Error("capacity report has a system section with no readings")
 		}
 	})
+}
+
+// TestCapacityTerminalReportCarriesTheSystemSection covers the terminal report
+// too: both renderers must show the same thing, or a reader has to guess which
+// one to trust.
+func TestCapacityTerminalReportCarriesTheSystemSection(t *testing.T) {
+	out := searchOutcome()
+	out.Validation.Result.System = collectedSystem()
+
+	var buf bytes.Buffer
+	RenderCapacity(&buf, collectedConfig(), out, "0.8.0", time.Second, false)
+	got := buf.String()
+
+	for _, want := range []string{"SYSTEM", "sampled every 5s", "postgres connections", "97.0%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("capacity report does not contain %q\n%s", want, got)
+		}
+	}
+}
+
+// TestCapacityTerminalReportOmitsTheSystemSection keeps the section out when
+// nothing was collected.
+func TestCapacityTerminalReportOmitsTheSystemSection(t *testing.T) {
+	var buf bytes.Buffer
+	RenderCapacity(&buf, collectedConfig(), searchOutcome(), "0.8.0", time.Second, false)
+	if strings.Contains(buf.String(), "SYSTEM") {
+		t.Error("capacity report has a system section with no readings")
+	}
 }

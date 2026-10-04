@@ -25,7 +25,7 @@ func systemRows(r collect.Report) []systemRow {
 			row.Min = seriesValue(st.Min, s.Unit)
 			row.Max = seriesValue(st.Max, s.Unit)
 			row.Avg = seriesValue(st.Avg, s.Unit)
-			row.PeakAt = peakAt(st.MaxAtMs)
+			row.PeakAt = peakCell(st)
 		}
 		rows = append(rows, row)
 	}
@@ -154,4 +154,14 @@ func peakAt(offsetMs float64) string {
 		return ms(offsetMs)
 	}
 	return d.Round(time.Second).String()
+}
+
+// peakCell renders the peak column for a series. A series that never moved has
+// no peak to point at, and an offset of a few milliseconds would only suggest
+// one: a flat metric reads as "—" instead.
+func peakCell(st collect.Stats) string {
+	if st.Max <= st.Min {
+		return "—"
+	}
+	return peakAt(st.MaxAtMs)
 }

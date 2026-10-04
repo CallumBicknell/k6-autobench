@@ -45,7 +45,8 @@ func TestObserveWithNoCollectors(t *testing.T) {
 }
 
 // TestObserveMergesCollectorReports checks every source ends up in one report,
-// including the ones that could not read anything.
+// including the ones that could not read anything, and that they appear in the
+// order they were configured rather than the order they happened to stop.
 func TestObserveMergesCollectorReports(t *testing.T) {
 	api := &fakeCollector{
 		name:   "api",
@@ -69,7 +70,13 @@ func TestObserveMergesCollectorReports(t *testing.T) {
 		t.Error("every collector should be stopped")
 	}
 	if len(report.Series) != 2 {
-		t.Errorf("series = %d, want both sources", len(report.Series))
+		t.Fatalf("series = %d, want both sources", len(report.Series))
+	}
+	// Configuration order, not stop order: the report's rows should not shuffle
+	// because stopping unwinds in reverse.
+	if report.Series[0].Source != "api" || report.Series[1].Source != "postgres" {
+		t.Errorf("series order = %q, %q; want api then postgres",
+			report.Series[0].Source, report.Series[1].Source)
 	}
 	if len(report.Failures) != 1 || report.Failures[0].Source != "postgres" {
 		t.Errorf("failures = %v, want the collector's own note kept", report.Failures)
