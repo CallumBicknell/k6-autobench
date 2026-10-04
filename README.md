@@ -7,10 +7,11 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.7** — `autobench run` (fixed rate) and `autobench capacity`
+> **Status: V0.8** — `autobench run` (fixed rate) and `autobench capacity`
 > (adaptive search) over weighted request pools or multi-step journeys, with
 > per-endpoint and response-class breakdowns, windowed latency analysis that
-> attributes a spike to the request that caused it, JSON and a self-contained
+> attributes a spike to the request that caused it, resource collectors that
+> sample the system under test while it is loaded, JSON and a self-contained
 > HTML report. See `PLAN-OUTLINE.md`.
 
 ## Install
@@ -328,6 +329,87 @@ Worst drift first, so the request to look at leads. This is a diagnostic rather
 than a gate: the run above passed its 500ms p95 SLO, and the table still points
 at `/slow`.
 
+## What the system was doing
+
+Everything above is the view from the client: how slow the response was, how
+many failed. It cannot say *why*. k6 does not know that the database was out of
+connections when the request arrived.
+
+Collectors sample the system under test's own metrics while it is loaded, from
+outside it, and the report puts them next to the latency they caused:
+
+```yaml
+collectors:
+  interval: 5s
+  prometheus:
+    - name: api
+      url: http://localhost:9090
+      queries:
+        - name: cpu
+          query: rate(process_cpu_seconds_total{job="api"}[1m])
+          unit: cores
+        - name: memory
+          query: process_resident_memory_bytes{job="api"}
+          unit: bytes
+
+    - name: postgres
+      url: http://localhost:9090
+      queries:
+        - name: connections
+          query: pg_stat_activity_count{job="postgres"}
+        - name: cpu
+          query: 100 * (1 - rate(node_cpu_seconds_total{mode="idle"}[1m]))
+          unit: percent
+```
+
+```
+  SYSTEM (sampled every 5s)
+
+  SERIES                          MIN        MAX        AVG   PEAK AT
+  api cpu (cores)                0.31       0.42       0.37       10s
+  api memory                 204.1MiB   457.8MiB   331.9MiB       10s
+  postgres connections            120        498      342.7       45s
+  postgres cpu                  22.0%      99.0%      61.4%       45s
+```
+
+The API never worked hard. The database ran out of connections at 45s — and if
+you have windowed analysis on, you can read that against the window table to see
+whether the latency spike started then.
+
+`PEAK AT` is measured from the start of the measurement, on the same timeline the
+window labels use. A series that never moved shows a dash: a connection pool
+pinned at its ceiling has no peak to point at.
+
+### Units
+
+Prometheus values are unitless, so the configuration has to say what they mean.
+`bytes` is rendered in binary units and `percent` with a sign; any other unit is
+attached to the series name (`api cpu (cores)`). Keeping units out of the value
+columns is what keeps a table of mixed units aligned.
+
+### Collectors never fail a run
+
+A collector is advisory. If Prometheus is unreachable, or a query has a typo, or
+the expression matches nothing, the report says so and the run carries on:
+
+```
+  ⚠ COLLECTOR PROBLEMS — readings missing, the run is unaffected
+    down: cpu: Get "http://127.0.0.1:19999/api/v1/query?query=up": dial tcp 127.0.0.1:19999: connect: connection refused
+    api: typo: prometheus error: unknown expression 'rate(nosuch_metric_total[1m])'
+```
+
+The verdict is untouched. Your monitoring being down says nothing about your
+capacity, and a load test that errors because Prometheus is unavailable would be
+worse than useless. Each failure is reported once, however many polls hit it.
+
+Mistakes that are visible without asking the server — a URL with no host, a
+duplicate name, an empty expression — are rejected at configuration time
+instead.
+
+Collectors run for **every** measurement: the fixed run, each search probe and
+the validation run. The capacity report shows the deciding measurement's
+readings (the validation run, or the last passing probe).
+
 ## Configuration
 
 ```yaml
@@ -365,6 +447,16 @@ thresholds:
     p50: { max: 100ms }
     p95: { max: 500ms }
     p99: { max: 1s }
+
+collectors:          # optional: sample the system under test while it is loaded
+  interval: 5s
+  prometheus:
+    - name: api
+      url: http://localhost:9090
+      queries:
+        - name: cpu
+          query: rate(process_cpu_seconds_total{job="api"}[1m])
+          unit: cores
 ```
 
 Unknown config keys are rejected, so typos fail fast.

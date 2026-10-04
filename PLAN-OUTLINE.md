@@ -18,9 +18,13 @@
 >   reading of what the mix implies.
 > - **V0.7 — done.** Per-endpoint windows: each window carries the request
 >   breakdown, so a spike is attributed to the request that caused it.
+> - **V0.8 — done.** Resource collectors (the first half of §33): a Prometheus
+>   collector behind a `collectors:` block, sampling the system under test while
+>   it is loaded, with the readings reported alongside the latency they caused.
+>   (`internal/collect`.)
 >
-> Still open: the resource/database collectors of §33, which need to observe the
-> system under test rather than wrap k6, and generator CPU/memory from §30.
+> Still open: the remaining collectors of §33 — Docker, Kubernetes, system — on
+> the abstraction V0.8 put in place, and generator CPU/memory from §30.
 >
 > Deviations worth knowing, and why:
 >
@@ -1872,6 +1876,41 @@ Likely correlated saturation:
 ```
 
 You're no longer just measuring performance — you're finding **where the bottleneck appears**.
+
+## What V0.8 built
+
+The **Prometheus** collector, because it is a pull endpoint and therefore covers
+the most ground for one implementation: whatever the system under test already
+exports is reachable through it.
+
+```text
+internal/collect/
+├── collect.go      Series, Sample, Report, Collector
+└── prometheus.go   instant-query polling on an interval
+```
+
+`Collector` is deliberately narrow — `Start(ctx)` returns a `stop()` that reports
+— so the rest of the outline's list can be added without touching the runner, the
+result model or the renderers:
+
+- **Start must not block.** A slow or unreachable monitoring endpoint must never
+  delay the measurement. Stopping waits briefly for a poll already in flight,
+  because that reading is the last one of the measurement.
+- **Failures are advisory.** A target's monitoring being unreachable says nothing
+  about its capacity, so a collector reports what it could not read and the run
+  carries on. Static mistakes (a URL with no host, a duplicate name) are caught at
+  configuration time instead.
+- **Readings are relative to the measurement.** Each sample carries an offset from
+  the start, on the same timeline the window labels use, so a resource peak can be
+  read against the latency window it landed in. The Prometheus server's own
+  timestamp is ignored on purpose: a clock skew would otherwise shift every
+  reading.
+
+The report gained a `SYSTEM` section showing min, max, average and the peak
+offset per series, in both the terminal and the HTML report.
+
+Docker, Kubernetes and system collectors, and the "likely correlated saturation"
+summary above, are still to come.
 
 ---
 

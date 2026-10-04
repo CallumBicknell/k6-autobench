@@ -1,0 +1,80 @@
+name: collectors-demo
+
+target:
+  base_url: http://localhost:3000
+
+workload:
+  type: http
+  requests:
+    - name: feed
+      method: GET
+      path: /feed
+      weight: 70
+
+    - name: create_post
+      method: POST
+      path: /posts
+      weight: 30
+      body: '{"title":"hello"}'
+      headers:
+        Content-Type: application/json
+
+run:
+  rate: 500
+  duration: 1m
+  time_unit: 1s
+
+thresholds:
+  error_rate:
+    max: 0.01
+  latency:
+    p95:
+      max: 250ms
+    p99:
+      max: 1s
+
+# Windowed analysis, so a resource peak can be read against the latency window it
+# landed in: the SYSTEM table's PEAK AT column uses the same timeline as the
+# window labels.
+analysis:
+  window: 10s
+
+# Resource collectors sample the system under test's own metrics while it is
+# loaded, so the report can say what the system was doing when it ran out of
+# capacity rather than only how slow it got.
+#
+# A collector is advisory: if Prometheus is unreachable, or a query has a typo,
+# the report says so and the run carries on. The verdict is never affected.
+collectors:
+  interval: 5s
+
+  prometheus:
+    # The API itself. One source per system keeps the report rows readable.
+    - name: api
+      url: http://localhost:9090
+      queries:
+        - name: cpu
+          query: rate(process_cpu_seconds_total{job="api"}[1m])
+          unit: cores
+        - name: memory
+          query: process_resident_memory_bytes{job="api"}
+          unit: bytes
+        - name: goroutines
+          query: go_goroutines{job="api"}
+
+    # The database behind it. This is the half k6 cannot see: a client-side p99
+    # spike looks the same whether the API or the database caused it.
+    - name: postgres
+      url: http://localhost:9090
+      queries:
+        - name: connections
+          query: pg_stat_activity_count{job="postgres"}
+        - name: cpu
+          query: 100 * (1 - rate(node_cpu_seconds_total{job="postgres",mode="idle"}[1m]))
+          unit: percent
+        - name: memory
+          query: process_resident_memory_bytes{job="postgres"}
+          unit: bytes
+
+# `autobench run examples/collectors.yaml` prints the SYSTEM table after the
+# windowed view. Add `--html report.html` for the same thing in the report.
