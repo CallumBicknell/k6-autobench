@@ -45,11 +45,10 @@ const TARGET_HOST = __ENV.AUTOBENCH_TARGET_HOST || '';
 // tlsAuthOptions is a client certificate mapped to the target's host, or nothing
 // when none is configured. It is a global option in k6 rather than a request
 // parameter, and an entry without domains is not applied at all.
-function tlsAuthOptions() {
-  if (!CLIENT_CERT || !CLIENT_KEY || !TARGET_HOST) {
-    return {};
+function applyTLSAuth(o) {
+  if (CLIENT_CERT && CLIENT_KEY && TARGET_HOST) {
+    o.tlsAuth = [{ domains: [TARGET_HOST], cert: CLIENT_CERT, key: CLIENT_KEY }];
   }
-  return { tlsAuth: [{ domains: [TARGET_HOST], cert: CLIENT_CERT, key: CLIENT_KEY }] };
 }
 
 // k6 emits one value per requested stat; "med" is the p50 alias.
@@ -88,10 +87,16 @@ export const options = {
   summaryTrendStats: trendStats,
   thresholds: submetricThresholds(),
   insecureSkipTLSVerify: INSECURE_TLS,
-  ...tlsAuthOptions(),
-  // Zero is a setting, so the empty string is what means "leave k6's default".
-  ...(MAX_REDIRECTS === '' ? {} : { maxRedirects: Number(MAX_REDIRECTS) }),
 };
+
+// The optional settings are applied after the literal rather than folded into it
+// with object spread. k6's older JavaScript engines do not compile `...expr`
+// inside an object literal: v0.50.0 rejects the whole script with a SyntaxError,
+// and this script has to run on whatever k6 the user has.
+if (MAX_REDIRECTS !== '') {
+  options.maxRedirects = Number(MAX_REDIRECTS);
+}
+applyTLSAuth(options);
 
 // Pre-compute a cumulative-weight table so each iteration picks a request with
 // a single O(n) scan over the (small) configured workload.
