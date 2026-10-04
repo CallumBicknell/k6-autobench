@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/callum/k6-autobench/internal/collect"
 	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
@@ -67,6 +68,7 @@ func Render(w io.Writer, cfg *config.Config, r *results.Result, version string, 
 	p.endpoints(r.Metrics)
 	p.windows(r.Windows, cfg)
 	p.endpointDrift(r.Windows, r.Metrics, cfg)
+	p.system(r.System, cfg)
 
 	p.separator()
 
@@ -162,6 +164,54 @@ func failureLine(f results.Failure) string {
 		return fmt.Sprintf("%-14s %s  >  %s   (limit)", f.Metric, pct(f.Observed), pct(f.Limit))
 	default:
 		return fmt.Sprintf("%-14s %s  >  %s   (limit)", f.Metric, ms(f.Observed), duration(f.Limit))
+	}
+}
+
+// system prints what the collectors saw of the system under test. It is the half
+// of the story k6 cannot see: k6 knows how slow the response was, not whether
+// the database was out of connections when it arrived.
+//
+// Like the drift section it is diagnostic, never a gate. It appears only when a
+// collector is configured, and it says so plainly when a collector could not
+// read anything rather than quietly showing less.
+func (p *printer) system(r collect.Report, cfg *config.Config) {
+	if r.IsZero() {
+		return
+	}
+
+	p.line("")
+	p.line("  " + p.paint(cBold, "SYSTEM") + " " + p.paint(cDim, "("+systemNote(cfg)+")"))
+
+	rows := systemRows(r)
+	if len(rows) > 0 {
+		p.line("")
+		p.line("  " + p.paint(cBold, fmt.Sprintf("%-24s%11s%11s%11s%10s",
+			"SERIES", "MIN", "MAX", "AVG", "PEAK AT")))
+		for _, row := range rows {
+			if !row.Summarised {
+				p.line(fmt.Sprintf("  %-24s%s", truncate(row.Series, 24),
+					p.paint(cDim, "no finite readings")))
+				continue
+			}
+			p.line(fmt.Sprintf("  %-24s%11s%11s%11s%10s",
+				truncate(row.Series, 24), row.Min, row.Max, row.Avg, row.PeakAt))
+		}
+	}
+
+	p.collectorIssues(r.Failures)
+}
+
+// collectorIssues lists what a collector could not read. It is a warning, not a
+// failure: the target's monitoring being unreachable says nothing about the
+// target's capacity, so the run's verdict stands regardless.
+func (p *printer) collectorIssues(failures []collect.Failure) {
+	if len(failures) == 0 {
+		return
+	}
+	p.line("")
+	p.line("  " + p.paint(cYellow, "⚠ COLLECTOR PROBLEMS — readings missing, the run is unaffected"))
+	for _, f := range failures {
+		p.line("    " + f.Source + ": " + f.Error)
 	}
 }
 

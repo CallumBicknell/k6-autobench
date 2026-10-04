@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/callum/k6-autobench/internal/collect"
 	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
@@ -54,6 +55,12 @@ type htmlPage struct {
 	WindowNote  string
 	// Drift attributes a window spike to the request that caused it.
 	Drift []htmlDrift
+
+	// System is the server-side view: what the collectors saw of the system
+	// under test while the measurement ran (PLAN-OUTLINE.md §33).
+	System       []systemRow
+	SystemNote   string
+	SystemIssues []string
 
 	Failures  []results.Failure
 	Generator *results.GeneratorStatus
@@ -208,6 +215,9 @@ func RenderHTML(w io.Writer, cfg *config.Config, r *results.Result, version stri
 	}
 	page.WindowChart, page.Windows, page.WindowNote = windowSection(r.Windows, cfg)
 	page.Drift = driftSection(r.Windows, r.Metrics, cfg)
+	page.System = systemRows(r.System)
+	page.SystemNote = systemNote(cfg)
+	page.SystemIssues = systemIssues(r.System)
 	return renderHTML(w, page)
 }
 
@@ -339,6 +349,9 @@ func RenderCapacityHTML(w io.Writer, cfg *config.Config, out *search.Outcome, ve
 	page.Chart = template.HTML(renderChart(out, cfg)) //nolint:gosec // built by us; dynamic text is escaped inside
 	page.WindowChart, page.Windows, page.WindowNote = windowSection(decidingWindows(out), cfg)
 	page.Drift = driftSection(decidingWindows(out), decidingMetrics(out), cfg)
+	page.System = systemRows(decidingSystem(out))
+	page.SystemNote = systemNote(cfg)
+	page.SystemIssues = systemIssues(decidingSystem(out))
 	page.Status = statusFacts(decidingMetrics(out))
 	page.StatusHint = statusHint(decidingMetrics(out).StatusClasses)
 	return renderHTML(w, page)
@@ -374,32 +387,43 @@ func renderChart(out *search.Outcome, cfg *config.Config) string {
 	return b.String()
 }
 
-// decidingMetrics picks the measurement whose endpoints the report describes:
-// the validation run when there is one, otherwise the probe at the capacity.
-func decidingMetrics(out *search.Outcome) metrics.Metrics {
+// decidingResult picks the measurement the report describes: the validation run
+// when there is one, otherwise the last passing probe. It returns nil when the
+// search never passed anything.
+func decidingResult(out *search.Outcome) *results.Result {
 	if out.Validation != nil {
-		return out.Validation.Result.Metrics
+		return &out.Validation.Result
 	}
 	for i := len(out.Probes) - 1; i >= 0; i-- {
 		if out.Probes[i].Pass {
-			return out.Probes[i].Result.Metrics
+			return &out.Probes[i].Result
 		}
+	}
+	return nil
+}
+
+// decidingMetrics is decidingResult for the endpoint breakdown.
+func decidingMetrics(out *search.Outcome) metrics.Metrics {
+	if r := decidingResult(out); r != nil {
+		return r.Metrics
 	}
 	return metrics.Metrics{}
 }
 
-// decidingWindows is decidingMetrics for the windowed view: the validation run's
-// windows when there is one, otherwise the passing probe's.
+// decidingWindows is decidingResult for the windowed view.
 func decidingWindows(out *search.Outcome) []metrics.Window {
-	if out.Validation != nil {
-		return out.Validation.Result.Windows
-	}
-	for i := len(out.Probes) - 1; i >= 0; i-- {
-		if out.Probes[i].Pass {
-			return out.Probes[i].Result.Windows
-		}
+	if r := decidingResult(out); r != nil {
+		return r.Windows
 	}
 	return nil
+}
+
+// decidingSystem is decidingResult for the collector readings.
+func decidingSystem(out *search.Outcome) collect.Report {
+	if r := decidingResult(out); r != nil {
+		return r.System
+	}
+	return collect.Report{}
 }
 
 func probeRows(probes []search.Probe) []htmlProbe {

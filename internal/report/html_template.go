@@ -144,6 +144,22 @@ const htmlBody = `<main>
 {{end}}
 {{end}}
 
+{{if .System}}
+<h2>System <span class="note">{{.SystemNote}}</span></h2>
+<table>
+<thead><tr><th>Series</th><th class="num">Min</th><th class="num">Max</th><th class="num">Avg</th><th class="num">Peak at</th></tr></thead>
+<tbody>
+{{range .System}}  <tr><td>{{.Series}}</td>{{if .Summarised}}<td class="num">{{.Min}}</td><td class="num">{{.Max}}</td><td class="num">{{.Avg}}</td><td class="num">{{.PeakAt}}</td>{{else}}<td colspan="4" class="note">no finite readings</td>{{end}}</tr>
+{{end}}</tbody>
+</table>
+{{end}}
+
+{{if .SystemIssues}}
+<div class="warn"><strong>Collector problems</strong> — these readings are missing. The load test is unaffected: a target's monitoring being unreachable says nothing about its capacity.<ul class="notes">
+{{range .SystemIssues}}  <li>{{.}}</li>
+{{end}}</ul></div>
+{{end}}
+
 {{if .Probes}}
 <h2>Probes</h2>
 <table>
