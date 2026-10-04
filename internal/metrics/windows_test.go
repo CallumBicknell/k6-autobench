@@ -62,6 +62,97 @@ func origin() time.Time {
 	return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 }
 
+// answeredStream builds a stream where window 0's requests got a 200 and window
+// 1's got nothing at all -- the shape a target that dies mid-run produces, with
+// k6 recording a zero duration for every request that never got an answer.
+func answeredStream(origin time.Time) string {
+	var b strings.Builder
+	at := func(sec int) time.Time { return origin.Add(time.Duration(sec) * time.Second) }
+	add := func(metric string, t time.Time, v float64) {
+		b.WriteString(point(metric, t, v) + "\n")
+	}
+
+	// Window 0: answered, with a real latency.
+	for i := 0; i < 4; i++ {
+		add("http_reqs", at(i), 1)
+		add("http_req_failed", at(i), 0)
+		add("http_req_duration", at(i), 5)
+		add("ab_status_2xx", at(i), 1)
+	}
+	// Window 1: nothing answered. k6 records a zero duration for each failure.
+	for i := 0; i < 4; i++ {
+		add("http_reqs", at(11+i), 1)
+		add("http_req_failed", at(11+i), 1)
+		add("http_req_duration", at(11+i), 0)
+		add("ab_status_other", at(11+i), 1)
+	}
+	return b.String()
+}
+
+// TestReadWindowsDropsLatencyWhenNothingAnswered is the regression test for a
+// misleading number at the window level: k6 records a zero duration for a request
+// that never got a response, so a window where the target was dead would report
+// 0ms and read as the fastest window in the run.
+func TestReadWindowsDropsLatencyWhenNothingAnswered(t *testing.T) {
+	windows, err := ReadWindows(strings.NewReader(answeredStream(origin())),
+		WindowConfig{Size: 10 * time.Second, Percentiles: []float64{95}})
+	if err != nil {
+		t.Fatalf("ReadWindows: %v", err)
+	}
+	if len(windows) != 2 {
+		t.Fatalf("windows = %d, want 2", len(windows))
+	}
+
+	answered, dead := windows[0], windows[1]
+
+	if answered.Unanswered {
+		t.Error("the answered window should not be marked unanswered")
+	}
+	if !answered.HasLatency || answered.MaxMs != 5 {
+		t.Errorf("answered window: HasLatency=%v max=%v, want true/5",
+			answered.HasLatency, answered.MaxMs)
+	}
+
+	if !dead.Unanswered {
+		t.Error("the window where nothing answered should be marked unanswered")
+	}
+	if dead.HasLatency || len(dead.Percentiles) != 0 || dead.MaxMs != 0 {
+		t.Errorf("dead window kept a latency: HasLatency=%v pcts=%v max=%v",
+			dead.HasLatency, dead.Percentiles, dead.MaxMs)
+	}
+	// The facts that explain it survive.
+	if dead.Requests != 4 || dead.Failed != 4 {
+		t.Errorf("dead window requests/failed = %d/%d, want 4/4", dead.Requests, dead.Failed)
+	}
+	for _, e := range dead.Endpoints {
+		if e.HasLatency {
+			t.Errorf("endpoint %s in a dead window kept its latency", e.Name)
+		}
+	}
+}
+
+// TestReadWindowsKeepsLatencyWithoutStatusClasses: a capture from a workload
+// script that does not record response classes has none at all, and that is not
+// the same as a window where nothing answered. Getting this wrong is how the
+// real-capture test above failed first.
+func TestReadWindowsKeepsLatencyWithoutStatusClasses(t *testing.T) {
+	windows, err := ReadWindows(strings.NewReader(sampleStream(origin(), map[int][]float64{
+		0: {5, 6, 7},
+	})), WindowConfig{Size: 10 * time.Second, Percentiles: []float64{95}})
+	if err != nil {
+		t.Fatalf("ReadWindows: %v", err)
+	}
+	if len(windows) != 1 {
+		t.Fatalf("windows = %d, want 1", len(windows))
+	}
+	if windows[0].Unanswered {
+		t.Error("a capture with no response classes is not an unanswered window")
+	}
+	if !windows[0].HasLatency {
+		t.Error("latency was dropped from a window that recorded none of the classes")
+	}
+}
+
 func TestReadWindowsBucketsByTime(t *testing.T) {
 	stream := sampleStream(origin(), map[int][]float64{
 		0: {1, 2, 3, 4, 5},

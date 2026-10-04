@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -29,7 +30,12 @@ type Window struct {
 	MaxMs      float64 `json:"latency_max_ms"`
 	// Sampled is set when the window held more samples than the retention cap,
 	// so its percentiles come from a prefix of the window rather than all of it.
-	Sampled     bool         `json:"sampled,omitempty"`
+	Sampled bool `json:"sampled,omitempty"`
+	// Unanswered records that every request in the window failed before a
+	// response came back, so the window has no latency to report. Its durations
+	// are k6's zeros for requests that never got an answer, and reporting those
+	// as 0ms would make a dead window look like the fastest one in the run.
+	Unanswered  bool         `json:"unanswered,omitempty"`
 	Percentiles []Percentile `json:"latency_percentiles_ms,omitempty"`
 	// Endpoints is the per-request breakdown of this window, so a spike can be
 	// attributed to the request that caused it rather than only noticed.
@@ -159,12 +165,16 @@ var (
 	metricDuration = []byte(`"http_req_duration"`)
 	metricRequests = []byte(`"http_reqs"`)
 	metricFailed   = []byte(`"http_req_failed"`)
+	// The response-class counters, so a window where nothing answered can be told
+	// apart from one that was merely fast.
+	metricStatus = []byte(`"` + StatusClassPrefix)
 )
 
 func interesting(line []byte) bool {
 	return bytes.Contains(line, metricDuration) ||
 		bytes.Contains(line, metricRequests) ||
-		bytes.Contains(line, metricFailed)
+		bytes.Contains(line, metricFailed) ||
+		bytes.Contains(line, metricStatus)
 }
 
 // windowAcc accumulates one window. Durations are retained because percentiles
@@ -175,6 +185,14 @@ type windowAcc struct {
 	requests  int64
 	failed    int64
 	durations []float64
+	// answered records that at least one response carried an HTTP status. A
+	// window where none did received no response at all, and its durations are
+	// k6's zeros for requests that never got an answer rather than measurements.
+	answered bool
+	// sawStatus records that the window saw any response-class sample at all. A
+	// capture from a workload script that does not record classes has none, and
+	// that is not the same as a window where nothing answered.
+	sawStatus bool
 	// endpoints holds the same aggregates per request name, so a window can be
 	// attributed. A sample with no name tag counts only towards the window.
 	endpoints map[string]*endpointAcc
@@ -185,6 +203,8 @@ type endpointAcc struct {
 	requests  int64
 	failed    int64
 	durations []float64
+	answered  bool
+	sawStatus bool
 }
 
 func (w *windowAcc) add(metric string, value float64, name string) {
@@ -220,6 +240,23 @@ func (w *windowAcc) add(metric string, value float64, name string) {
 		if ep != nil {
 			ep.durations = append(ep.durations, value)
 		}
+	default:
+		// A response-class counter. Only a class other than "other" means a
+		// status line came back; "other" is the transport failure k6 records a
+		// zero duration for.
+		if !strings.HasPrefix(metric, StatusClassPrefix) {
+			return
+		}
+		w.sawStatus = true
+		if ep != nil {
+			ep.sawStatus = true
+		}
+		if strings.TrimPrefix(metric, StatusClassPrefix) != StatusClassOther {
+			w.answered = true
+			if ep != nil {
+				ep.answered = true
+			}
+		}
 	}
 }
 
@@ -237,7 +274,14 @@ func (w *windowAcc) finish(percentiles []float64, maxValues int) Window {
 
 	durations, sampled := capValues(w.durations, maxValues)
 	out.Sampled = sampled
-	if len(durations) > 0 {
+
+	// A window where nothing answered measured no latency. k6 records a duration
+	// of zero for a request that never got a response, and a zero reads as
+	// instant -- so a window where the target was dead would otherwise look like
+	// the fastest one in the run, and would be ranked as such.
+	if w.requests > 0 && w.sawStatus && !w.answered {
+		out.Unanswered = true
+	} else if len(durations) > 0 {
 		out.HasLatency = true
 		out.AvgMs = mean(durations)
 		out.MaxMs = durations[len(durations)-1]
@@ -268,7 +312,11 @@ func finishEndpoints(accs map[string]*endpointAcc, percentiles []float64, maxVal
 		if acc.requests > 0 {
 			e.ErrorRate = float64(acc.failed) / float64(acc.requests)
 		}
-		if len(durations) > 0 {
+		// Same rule as the window: an endpoint whose requests never got an
+		// answer has no latency, and a zero would read as instant.
+		if acc.requests > 0 && acc.sawStatus && !acc.answered {
+			// The latency is dropped; the request and error counts remain.
+		} else if len(durations) > 0 {
 			e.HasLatency = true
 			e.AvgMs = mean(durations)
 			e.MaxMs = durations[len(durations)-1]

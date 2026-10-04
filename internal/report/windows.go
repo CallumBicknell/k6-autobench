@@ -186,10 +186,27 @@ func (p *printer) windows(ws []metrics.Window, cfg *config.Config) {
 		p.line("")
 		p.line("  " + p.paint(cYellow, summary))
 	}
+	if n := countUnanswered(ws); n > 0 {
+		p.line("  " + p.paint(cRed, fmt.Sprintf(
+			"%d of %d windows received no response at all: the target did not answer.", n, len(ws))))
+		p.line("  " + p.paint(cDim,
+			"Their latency is left blank rather than reported as zero, which would read as instant."))
+	}
 	if anySampled(ws) {
 		p.line("  " + p.paint(cDim,
 			"Some windows held more samples than were retained; their percentiles come from a prefix."))
 	}
+}
+
+// countUnanswered counts the windows where nothing answered.
+func countUnanswered(ws []metrics.Window) int {
+	n := 0
+	for _, w := range ws {
+		if w.Unanswered {
+			n++
+		}
+	}
+	return n
 }
 
 // windowLabel renders a window's time range, e.g. "10s-20s".
@@ -219,7 +236,10 @@ func latencyOrDash(w metrics.Window) string {
 func worstWindow(ws []metrics.Window) int {
 	worst, worstVal := -1, -1.0
 	for _, w := range ws {
-		if w.Requests == 0 {
+		if w.Requests == 0 || w.Unanswered {
+			// A window where nothing answered has no latency to be the worst at.
+			// Ranking it would let a dead window lose to a healthy one purely
+			// because it had no number to compare.
 			continue
 		}
 		v := w.MaxMs
