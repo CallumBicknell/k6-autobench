@@ -187,6 +187,11 @@ type Run struct {
 	Rate     int      `yaml:"rate"`
 	Duration Duration `yaml:"duration"`
 	TimeUnit string   `yaml:"time_unit"`
+	// K6Timeout bounds how long the k6 process may run. Empty means the
+	// measurement's own duration plus a grace period, which is enough for a
+	// healthy run; set it when a scenario legitimately takes longer to tear
+	// down, or to bound a pipeline more tightly.
+	K6Timeout Duration `yaml:"k6_timeout"`
 }
 
 // LoadGenerator constrains the k6 VU pool.

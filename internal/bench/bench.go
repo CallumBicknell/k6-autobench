@@ -41,6 +41,9 @@ type Measurer struct {
 	MaxVUGrowth int
 	// Window, when > 0, enables per-window aggregates for every measurement.
 	Window time.Duration
+	// Timeout, when > 0, bounds how long each k6 process may run. Zero means the
+	// measurement's own duration plus a grace period.
+	Timeout time.Duration
 	// Collectors, when set, observe the system under test's own metrics during
 	// every measurement (PLAN-OUTLINE.md §33).
 	Collectors []collect.Collector
@@ -125,6 +128,7 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		MaxVUs:          plan.Max,
 		Percentiles:     m.Config.Percentiles,
 		Window:          m.Window,
+		Timeout:         m.Timeout,
 		Collectors:      m.Collectors,
 	}
 

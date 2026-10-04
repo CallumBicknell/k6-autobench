@@ -65,6 +65,7 @@ func capacityCommand(args []string) int {
 	fs.Float64Var(&ov.safetyMargin, "safety-margin", 0, "fraction of the discovered capacity to validate at, e.g. 0.9 (overrides config)")
 	fs.IntVar(&ov.vus, "vus", 0, "pin the pre-allocated VU pool (overrides config)")
 	fs.IntVar(&ov.maxVUs, "max-vus", 0, "pin the maximum VU pool (overrides config)")
+	fs.StringVar(&ov.k6Timeout, "k6-timeout", "", "kill k6 if a probe runs longer than this (default: the probe duration plus a grace period)")
 	fs.StringVar(&k6Path, "k6", "", "path to the k6 binary (default: $AUTOBENCH_K6 or \"k6\")")
 	fs.StringVar(&scriptPath, "script", "", "override the embedded k6 workload script")
 	fs.StringVar(&jsonOut, "json", "", "write the search result as JSON to this path")
@@ -104,6 +105,7 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 		Warmup:      cfg.Search.Warmup.Duration,
 		MaxVUGrowth: cfg.Search.MaxVUGrowth,
 		Window:      cfg.Analysis.Window.Duration,
+		Timeout:     cfg.Run.K6Timeout.Duration,
 		Collectors:  buildCollectors(cfg),
 		OnProgress:  func(msg string) { fmt.Fprintln(os.Stderr, "autobench: "+msg) },
 	}

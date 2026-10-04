@@ -170,6 +170,9 @@ func (c *Config) ValidateMode(mode Mode) error {
 	if err := c.validateAnalysis(); err != nil {
 		return err
 	}
+	if c.Run.K6Timeout.Duration < 0 {
+		return errors.New("run.k6_timeout must not be negative")
+	}
 	if err := c.validateCollectors(); err != nil {
 		return err
 	}

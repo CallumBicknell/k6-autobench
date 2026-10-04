@@ -77,8 +77,9 @@ type overrides struct {
 	maxVUs     int
 
 	// Fixed-rate run.
-	rate     int
-	duration string
+	rate      int
+	duration  string
+	k6Timeout string
 
 	// Capacity search.
 	startRate      int
@@ -128,6 +129,7 @@ func runCommand(args []string) int {
 	fs.StringVar(&ov.target, "target", "", "target base URL (overrides config)")
 	fs.IntVar(&ov.rate, "rate", 0, "iteration rate (overrides config run.rate)")
 	fs.StringVar(&ov.duration, "duration", "", "run duration, e.g. 30s or 2m (overrides config)")
+	fs.StringVar(&ov.k6Timeout, "k6-timeout", "", "kill k6 if it runs longer than this (default: the duration plus a grace period)")
 	fs.IntVar(&ov.vus, "vus", 0, "pre-allocated VUs (overrides config)")
 	fs.IntVar(&ov.maxVUs, "max-vus", 0, "maximum VUs (overrides config)")
 	fs.StringVar(&ov.timeUnit, "time-unit", "", "arrival-rate time unit, e.g. 1s (overrides config)")
@@ -170,6 +172,7 @@ func runCommand(args []string) int {
 		MaxVUs:          cfg.LoadGenerator.MaxVUs,
 		Percentiles:     cfg.Percentiles,
 		Window:          cfg.Analysis.Window.Duration,
+		Timeout:         cfg.Run.K6Timeout.Duration,
 		Collectors:      buildCollectors(cfg),
 	}
 
@@ -305,6 +308,7 @@ func buildConfig(path string, mode config.Mode, set map[string]bool, ov override
 		dst   *config.Duration
 	}{
 		{"duration", ov.duration, &cfg.Run.Duration},
+		{"k6-timeout", ov.k6Timeout, &cfg.Run.K6Timeout},
 		{"probe-duration", ov.probeDuration, &cfg.Search.ProbeDuration},
 		{"warmup", ov.warmup, &cfg.Search.Warmup},
 		{"validation-duration", ov.validationDur, &cfg.Validation.Duration},

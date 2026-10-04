@@ -42,6 +42,34 @@ type Spec struct {
 	// result carries the server-side view alongside k6's client-side one
 	// (PLAN-OUTLINE.md §33).
 	Collectors []collect.Collector
+	// Timeout bounds how long the k6 process may run. Zero means Duration plus
+	// DefaultGrace, which is generous enough never to fire on a healthy run and
+	// bounded enough that a wedged k6 cannot hang a pipeline forever.
+	Timeout time.Duration
+}
+
+// DefaultGrace is the slack a k6 process is given beyond its declared duration
+// before it is killed.
+//
+// A healthy run finishes just after its scenario ends, but k6 has to start up
+// and, when windowing is on, write a sample file proportional to rate x
+// duration. A minute covers that; ten percent of the run covers a long soak.
+const DefaultGrace = time.Minute
+
+// waitDelay bounds how long a killed k6's output pipes may stay open before Run
+// gives up waiting on them.
+const waitDelay = 5 * time.Second
+
+// timeout is how long the k6 process may take: the declared duration plus slack.
+func (s Spec) timeout() time.Duration {
+	if s.Timeout > 0 {
+		return s.Timeout
+	}
+	grace := DefaultGrace
+	if tenth := s.Duration / 10; tenth > grace {
+		grace = tenth
+	}
+	return s.Duration + grace
 }
 
 // Outcome is what one k6 invocation produced.
@@ -108,9 +136,19 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 	}
 	args = append(args, scriptPath)
 
-	cmd := exec.CommandContext(ctx, k6Path, args...)
+	// Bound the k6 process. A healthy run finishes just after its scenario ends,
+	// so the deadline only fires on a wedged k6 -- and without it a wedged k6
+	// hangs the caller, which in a pipeline means a hung job.
+	runCtx, cancel := context.WithTimeout(ctx, spec.timeout())
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, k6Path, args...)
 	cmd.Env = env
 	cmd.Stdin = nil
+	// Killing k6 kills k6, but anything it spawned could still be holding the
+	// output pipes open, and Wait would block on them until it exited. WaitDelay
+	// bounds that, so a deadline that fires always returns.
+	cmd.WaitDelay = waitDelay
 
 	// k6 logs one warning per failed request, which floods the terminal when the
 	// target is unreachable. Capture a bounded tail instead and surface it only
@@ -134,6 +172,15 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 	system := stopObserving()
 
 	if runErr != nil {
+		// A deadline that fired is worth saying plainly: the run was killed,
+		// which is different from k6 failing on its own.
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, fmt.Errorf(
+				"k6 did not finish within %s and was killed; it was asked to run for %s. "+
+					"Raise run.k6_timeout if the scenario legitimately takes longer",
+				spec.timeout(), spec.Duration)
+		}
+
 		var parts []string
 		if out := stdout.Tail(20); out != "" {
 			parts = append(parts, "k6 stdout:\n"+out)
