@@ -7,13 +7,14 @@ decides the load, spawns k6, parses the machine-readable summary, evaluates your
 SLO thresholds and renders the report. k6 stays a dumb, precisely controlled
 arrival-rate generator.
 
-> **Status: V0.9** — `autobench run` (fixed rate) and `autobench capacity`
+> **Status: V1.0** — `autobench run` (fixed rate) and `autobench capacity`
 > (adaptive search) over weighted request pools or multi-step journeys, with
 > per-endpoint and response-class breakdowns, windowed latency analysis that
 > attributes a spike to the request that caused it, resource collectors
 > (Prometheus, Docker, system, Kubernetes) that sample a system while it is
-> loaded and rank what moved with the latency, JSON and a self-contained HTML
-> report. See `PLAN-OUTLINE.md`.
+> loaded and rank what moved with the latency, and `autobench compare`, which
+> turns two recorded runs into a regression gate for CI. JSON and a
+> self-contained HTML report throughout. See `PLAN-OUTLINE.md`.
 
 ## Install
 
@@ -24,6 +25,18 @@ go build -o bin/autobench ./cmd/autobench
 # or
 make build
 ```
+
+Or build the container, which ships the orchestrator and the generator together:
+
+```bash
+docker build -t autobench .
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/bench" \
+  autobench capacity bench.yaml --json /bench/baseline.json
+```
+
+`--user` is needed whenever a result has to land in a mounted directory: the k6
+image runs as uid 12345, so without it the container cannot write to a
+host-owned mount.
 
 ## Usage
 
@@ -37,18 +50,23 @@ autobench run examples/api.yaml --rate 2000 --json result.json
 autobench capacity examples/api-capacity.yaml
 autobench capacity bench.yaml --start-rate 500 --probe-duration 30s
 autobench capacity --target http://localhost:3000 --start-rate 100 --max-probes 6
+
+# Regression gate: did this change make it worse?
+autobench compare baseline.json candidate.json
+autobench compare baseline.json candidate.json --html compare.html
 ```
 
 The config path is a positional argument and flags may appear before or after it.
 `run` is also available as `fixed`, and `capacity` as `search`.
 
 Exit codes: `0` all thresholds passed · `1` a threshold failed, no capacity was
-found, or the generator saturated · `2` usage/runtime error.
+found, the generator saturated, or a regression was found · `2` usage/runtime
+error.
 
 Verdicts: `PASS`, `FAIL_LATENCY`, `FAIL_ERRORS`, `FAIL_GENERATOR`,
-`FAIL_NO_CAPACITY`. A saturated generator outranks threshold breaches, because a
-probe that never reached the target rate says nothing about the system under
-test.
+`FAIL_NO_CAPACITY`, `FAIL_REGRESSION`. A saturated generator outranks threshold
+breaches, because a probe that never reached the target rate says nothing about
+the system under test.
 
 ### Flags
 
@@ -63,6 +81,7 @@ test.
 | `--max-vus` | Maximum VUs |
 | `--k6` | Path to the k6 binary |
 | `--script` | Override the embedded k6 workload script |
+| `--k6-timeout` | Kill k6 if it runs longer than this (default: the duration plus a grace period) |
 | `--json` | Write the full result as JSON |
 | `--html` | Write a self-contained HTML report |
 | `--no-color` | Disable coloured output |
@@ -86,6 +105,17 @@ test.
 | `--safety-margin` | Fraction of capacity to validate at, e.g. `0.9` |
 | `--html` | Write a self-contained HTML report |
 | `--out-dir` | Write the config, manifest, per-probe results, summary and HTML report |
+
+`autobench compare` takes two result files and no config:
+
+| Flag | Description |
+| --- | --- |
+| `--tolerance-latency` | How much worse a percentile may get before it fails (default `0.10`) |
+| `--tolerance-capacity` | How much capacity may drop before it fails (default `0.05`) |
+| `--tolerance-errors` | How much the error rate may rise, in absolute terms (default `0.001`) |
+| `--json` | Write the comparison as JSON |
+| `--html` | Write a self-contained HTML report |
+| `--no-color` | Disable coloured output |
 
 ## The capacity search
 
@@ -171,6 +201,106 @@ using the latency the previous probe actually observed. The pool is monotone: it
 never shrinks below what the search has already needed, so a retry always gives
 k6 more VUs than the attempt that saturated. Anything you pin in
 `load_generator` is left alone.
+
+## Gating a change
+
+A capacity search answers *how much can this system take*. It cannot answer *did
+this change make it worse*, because that is a question about two runs.
+`autobench compare` is that question, and it is the reason to run autobench in a
+pipeline at all.
+
+```bash
+autobench capacity bench.yaml --json baseline.json   # on main
+autobench capacity bench.yaml --json candidate.json  # on the PR
+autobench compare baseline.json candidate.json
+```
+
+```text
+  CAPACITY
+
+  METRIC            BASELINE   CANDIDATE      CHANGE
+  capacity               675         621       -8.0%   REGRESSION
+
+  LATENCY
+
+  METRIC            BASELINE   CANDIDATE      CHANGE
+  p95                  3.0ms       3.9ms      +30.1%   REGRESSION
+
+  ERRORS
+
+  METRIC            BASELINE   CANDIDATE      CHANGE
+  error rate          0.000%      0.000%    +0.000pp   ok
+
+  REQUESTS
+
+  REQUEST               BASELINE p95 CANDIDATE p95      CHANGE
+  root                         3.0ms         3.9ms      +30.1%   REGRESSION
+
+  RESULT: FAIL_REGRESSION
+
+  2 metrics regressed: capacity, p95
+
+  a single run against a single run is a noisy measurement;
+  narrow the tolerance only once you know your noise floor
+```
+
+(The `REQUESTS` block appears when both runs recorded a per-request breakdown,
+and leads with the request that regressed.)
+
+Both files come from `--json` on either command, and must be the same kind of
+run. Latency is compared percentile by percentile, errors in absolute terms, and
+capacity only between two searches — one measurement is not a capacity.
+
+### Direction is per metric
+
+A latency rise is bad, a capacity drop is bad, an error rise is bad. autobench
+reports the signed change *and* the verdict, because a bare `+56.8%` invites
+reading a regression as good news.
+
+### What counts as a regression
+
+| Metric | Judged on | Default tolerance |
+| --- | --- | --- |
+| Latency percentiles | the relative change | 10% worse |
+| Capacity | the relative change | 5% lower |
+| Error rate | the **absolute** rise | +0.1 percentage points |
+| Per-request p95 | the relative change | 10% worse |
+
+The error rate is the exception, and deliberately so. Going from 0.1% to 0.2% has
+doubled, but the doubling is not the alarming part, and a relative tolerance
+would treat a trivial rate as a crisis.
+
+The defaults are loose on purpose: a load test is a noisy measurement, and a gate
+that fires on run-to-run variation is a gate people turn off. Narrow them once
+you know your system's noise floor.
+
+### A comparison says when it is not like for like
+
+Different targets, different rates, a fixed run against a search, a run whose
+generator saturated — each produces a note rather than a quiet answer. A
+comparison of two different things is worse than no comparison, because it looks
+like one.
+
+A request only one of the runs exercised is reported as added or removed, not as
+a regression: that is a change in the workload, not in the system.
+
+### In CI
+
+`examples/github-actions.yml` is a starting point. The shape:
+
+1. Search on the PR branch, writing `--json candidate.json`.
+2. Compare against `benchmarks/baseline.json`, committed on the default branch.
+3. Fail the job on a regression, and upload the HTML report either way.
+4. On the default branch, refresh the baseline.
+
+Committing the baseline is the point: the number a PR is judged against is a
+reviewed change, not whatever the last pipeline happened to leave behind.
+
+If the baseline is missing the job warns rather than passing silently, so a fresh
+repository is not broken and a missing gate is not mistaken for a passing one.
+
+`--json` on `compare` writes the comparison itself, so a CI job can archive one
+artefact and still know which two files it compared.
 
 ## Reporting
 
@@ -679,4 +809,10 @@ out of VUs or drops iterations, autobench detects it and reports
 make test    # go test ./...
 make vet     # go vet ./...
 make build   # build ./bin/autobench
+make image   # build the container
 ```
+
+`make test` runs the suite `-race`-clean. The suite drives real subprocesses for
+the parts that are about subprocesses — the k6 timeout tests use a shell script
+standing in for k6, because hanging a process on purpose is the only way to test
+what happens when one hangs.

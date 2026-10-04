@@ -1461,13 +1461,17 @@ results/
 
 That gives you reproducibility.
 
-You can later say:
+**Implemented (V1.0).** `--out-dir` writes exactly this, and `compare` reads it.
+
+You can now say:
 
 ```bash
-autobench compare \
-  results/2026-10-01/... \
-  results/2026-10-02/...
+autobench compare baseline.json candidate.json
 ```
+
+(pointed at the `--json` each run wrote, rather than at the directory, so a
+comparison names two files rather than guessing which run inside a tree it
+means)
 
 And see:
 
@@ -1632,6 +1636,11 @@ k6 already has ramping arrival-rate executors for varying iteration rates over s
 ---
 
 # 29. Eventually I'd add multiple test modes
+
+**Partly implemented.** `capacity` (alias `search`), `fixed` (alias `run`) and
+`compare` ship. `ramp`, `spike` and `soak` do not: k6's ramping executors cover
+them, and a fixed run at a known rate plus the windowed analysis answers the same
+questions without a second mode to keep correct.
 
 Your tool could expose:
 
@@ -2106,7 +2115,7 @@ At this point it's already a genuinely useful tool.
 
 ## V0.4 — production-grade benchmarker
 
-Add:
+**Implemented (V1.0).** Every item on this list now ships:
 
 * repeated confirmation
 * generator saturation detection
@@ -2119,26 +2128,52 @@ Add:
 * GitHub Actions
 * regression detection
 
-Then:
+`autobench compare` is the last of them, and the one that makes the rest usable
+in a pipeline: a capacity search is a measurement, and only a comparison against
+a known-good baseline says whether a change made things worse. It reads two
+`--json` results — fixed runs or searches — and reports the change per
+metric with the direction that matters, failing on anything past a configurable
+tolerance. `examples/github-actions.yml` wires it into a pull request.
+
+Three decisions are worth recording:
+
+* **Direction is per metric, and the error rate is judged in absolute terms.** A
+  latency rise is bad, a capacity drop is bad, an error rise is bad; a signed
+  percentage without that invites reading a regression as good news. The error
+  rate is the exception to the second half: 0.1% to 0.2% has doubled, but the
+  doubling is not the alarming part, and a relative tolerance would treat a
+  trivial rate as a crisis.
+* **Only the intersection is compared.** A percentile one run did not collect has
+  nothing to compare against, and inventing a zero reports a spectacular
+  improvement. Capacity is compared only between two searches, because one
+  measurement is not a capacity.
+* **A mismatch is called out, not smoothed over.** Different targets, different
+  rates, a fixed run against a search and a generator-saturated run each produce
+  a note. A comparison of two different things is worse than no comparison,
+  because it looks like an answer.
+
+The tolerances default loose — 10% latency, 5% capacity, 0.1pp of errors —
+because a load test is a noisy measurement and a gate that fires on run-to-run
+variation is a gate people turn off. Both reports say so.
 
 ```bash
 autobench compare main.json pr.json
 ```
 
-could eventually say:
-
 ```text
-Performance regression detected
+  CAPACITY
 
-p99:
-  main:  81ms
-  PR:    127ms
-  change: +56.8%
+  METRIC            BASELINE   CANDIDATE      CHANGE
+  capacity               675         621       -8.0%   REGRESSION
 
-capacity:
-  main:  13,500 RPS
-  PR:    11,900 RPS
-  change: -11.9%
+  LATENCY
+
+  METRIC            BASELINE   CANDIDATE      CHANGE
+  p95                  3.0ms       3.9ms      +30.1%   REGRESSION
+
+  RESULT: FAIL_REGRESSION
+
+  2 metrics regressed: capacity, p95
 ```
 
 ---
