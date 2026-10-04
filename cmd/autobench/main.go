@@ -229,6 +229,7 @@ func runCommand(args []string) int {
 		ClientCertFile:  cfg.Target.TLS.CertFile,
 		ClientKeyFile:   cfg.Target.TLS.KeyFile,
 		RequestTimeout:  cfg.Target.RequestTimeout.Duration,
+		MaxRedirects:    cfg.Target.MaxRedirects,
 		Collectors:      buildCollectors(cfg),
 	}
 

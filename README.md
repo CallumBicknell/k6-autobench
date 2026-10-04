@@ -27,6 +27,18 @@ windowed analysis all work on both, so anything in between should be fine.
 go build -o bin/autobench ./cmd/autobench
 # or
 make build
+
+# install into $(go env GOBIN) or $(go env GOPATH)/bin
+go install ./cmd/autobench
+```
+
+A release build — `make release`, or the workflow on a `v*` tag — cross-compiles
+linux, darwin and windows on amd64 and arm64 into `dist/`, with a `checksums.txt`.
+The binaries record their commit and build time:
+
+```bash
+autobench version
+autobench 1.0.0 (e6ca963, built 2026-10-04T16:12:40Z)
 ```
 
 Or build the container, which ships the orchestrator and the generator together:
@@ -739,6 +751,7 @@ name: social-api
 target:
   base_url: http://localhost:3000
   request_timeout: 10s   # optional; k6's own default is 60s
+  # max_redirects: 0     # optional; k6's own default is 10
   tls:                   # optional; for a target the system roots do not cover
     insecure: true       # accept any certificate
     # ca_file: /etc/ssl/private-ca.pem   # or verify against a bundle
@@ -829,6 +842,17 @@ target reached by a different name would not present it.
 longer than a probe: a target that hangs makes the probe last a minute rather than
 the duration it was configured for, so the run measures the hang instead of the
 load. Set it below `probe_duration`.
+
+`max_redirects` is how many redirects one request may follow. k6's own default is
+10, and following a chain measures the whole chain; setting it to `0` measures the
+redirect itself, reporting the 3xx as the response. Unset means k6's default, so
+zero and absent are different settings:
+
+```yaml
+target:
+  base_url: http://service-with-a-301
+  max_redirects: 0
+```
 
 ### Iterations vs requests
 

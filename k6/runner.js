@@ -30,6 +30,10 @@ const SUMMARY_PATH = __ENV.AUTOBENCH_SUMMARY_PATH || '';
 // and k6 verifies by default, so the switch is passed through rather than assumed.
 const INSECURE_TLS = (__ENV.AUTOBENCH_INSECURE_TLS || 'false') === 'true';
 const REQUEST_TIMEOUT = __ENV.AUTOBENCH_REQUEST_TIMEOUT || '';
+// k6 follows up to 10 redirects by default, which is a decision a benchmark may
+// want to make differently: following a chain measures the whole chain, and not
+// following measures the redirect itself.
+const MAX_REDIRECTS = __ENV.AUTOBENCH_MAX_REDIRECTS || '';
 // A target that authenticates the caller needs a client certificate, which k6
 // takes as PEM contents rather than as a path.
 const CLIENT_CERT = __ENV.AUTOBENCH_CLIENT_CERT || '';
@@ -85,6 +89,8 @@ export const options = {
   thresholds: submetricThresholds(),
   insecureSkipTLSVerify: INSECURE_TLS,
   ...tlsAuthOptions(),
+  // Zero is a setting, so the empty string is what means "leave k6's default".
+  ...(MAX_REDIRECTS === '' ? {} : { maxRedirects: Number(MAX_REDIRECTS) }),
 };
 
 // Pre-compute a cumulative-weight table so each iteration picks a request with

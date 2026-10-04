@@ -112,6 +112,7 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 		ClientCertFile: cfg.Target.TLS.CertFile,
 		ClientKeyFile:  cfg.Target.TLS.KeyFile,
 		RequestTimeout: cfg.Target.RequestTimeout.Duration,
+		MaxRedirects:   cfg.Target.MaxRedirects,
 		Collectors:     buildCollectors(cfg),
 		OnProgress:     func(msg string) { fmt.Fprintln(os.Stderr, "autobench: "+msg) },
 	}

@@ -33,8 +33,9 @@ func statusHint(classes []metrics.StatusClass) string {
 		return fmt.Sprintf("%s of responses were 4xx: the target is rejecting these requests — "+
 			"check the workload (paths, methods, bodies) before reading the rest as capacity.", share)
 	case "3xx":
-		return fmt.Sprintf("%s of responses were 3xx: the target is redirecting, and k6 does not "+
-			"follow redirects by default.", share)
+		return fmt.Sprintf("%s of responses were 3xx: the target is redirecting. k6 follows "+
+			"up to 10 redirects by default, so set target.max_redirects: 0 to measure the "+
+			"redirect itself.", share)
 	default:
 		return fmt.Sprintf("%s of responses had no HTTP status: transport-level failures.", share)
 	}

@@ -113,6 +113,51 @@ func TestBuildEnvRejectsZeroRate(t *testing.T) {
 }
 
 // TestBuildEnvCarriesEverythingElse keeps the rest of the contract honest.
+// envValueOrEmpty reads one entry, returning "" when it is not there. envValue
+// fails the test in that case, which is right for a key that must be present and
+// wrong for one whose absence is the expected state.
+func envValueOrEmpty(env []string, key string) string {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return strings.TrimPrefix(kv, prefix)
+		}
+	}
+	return ""
+}
+
+// TestBuildEnvCarriesMaxRedirects: zero is a setting, not the absence of one, so
+// presence is what has to be tested rather than truthiness.
+func TestBuildEnvCarriesMaxRedirects(t *testing.T) {
+	spec := specFor(config.Workload{Requests: []config.Request{{Name: "a", Path: "/a"}}})
+
+	if got := envValueOrEmpty(envFor(t, spec), "AUTOBENCH_MAX_REDIRECTS"); got != "" {
+		t.Errorf("AUTOBENCH_MAX_REDIRECTS = %q, want unset by default", got)
+	}
+
+	zero := 0
+	spec.MaxRedirects = &zero
+	if got := envValueOrEmpty(envFor(t, spec), "AUTOBENCH_MAX_REDIRECTS"); got != "0" {
+		t.Errorf("AUTOBENCH_MAX_REDIRECTS = %q, want 0", got)
+	}
+
+	three := 3
+	spec.MaxRedirects = &three
+	if got := envValueOrEmpty(envFor(t, spec), "AUTOBENCH_MAX_REDIRECTS"); got != "3" {
+		t.Errorf("AUTOBENCH_MAX_REDIRECTS = %q, want 3", got)
+	}
+}
+
+// envFor builds the environment for a spec, failing the test on error.
+func envFor(t *testing.T, spec Spec) []string {
+	t.Helper()
+	env, err := buildEnv(spec, "/tmp/summary.json")
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	return env
+}
+
 // TestBuildEnvCarriesTheTargetTLSSettings covers the two ways a staging target
 // with a certificate the system roots do not know can be reached at all.
 func TestBuildEnvCarriesTheTargetTLSSettings(t *testing.T) {

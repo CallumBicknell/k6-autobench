@@ -58,9 +58,12 @@ func TestStatusHintIsThePointOfTheBreakdown(t *testing.T) {
 			want: "check the workload",
 		},
 		{
+			// The old text claimed k6 does not follow redirects, which is not
+			// true of any version this supports: both v0.49.0 and v2.1.0 follow
+			// up to ten by default.
 			name: "3xx explains redirects",
 			in:   classes(c("2xx", 900), c("3xx", 100)),
-			want: "does not\nfollow redirects",
+			want: "follows",
 		},
 		{
 			name: "other means transport failures",

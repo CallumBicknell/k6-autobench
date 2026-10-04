@@ -142,6 +142,13 @@ type Target struct {
 	// probe take a minute rather than the duration it was configured for, and
 	// the run would measure the hang rather than the load.
 	RequestTimeout Duration `yaml:"request_timeout"`
+	// MaxRedirects is how many redirects one request may follow. Unset means
+	// k6's own default, which is 10; zero means follow none, so a 3xx is reported
+	// as the response rather than chased.
+	//
+	// It is a pointer because zero is a meaningful setting and not the same as
+	// leaving it alone.
+	MaxRedirects *int `yaml:"max_redirects"`
 	// TLS configures how the target's certificate is treated.
 	TLS TargetTLS `yaml:"tls"`
 }

@@ -277,6 +277,9 @@ func (c *Config) validateTargetTLS() error {
 	if c.Target.RequestTimeout.Duration < 0 {
 		return errors.New("target.request_timeout must not be negative")
 	}
+	if r := c.Target.MaxRedirects; r != nil && *r < 0 {
+		return errors.New("target.max_redirects must not be negative")
+	}
 
 	tls := c.Target.TLS
 	cert := strings.TrimSpace(tls.CertFile)

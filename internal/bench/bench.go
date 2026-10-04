@@ -52,6 +52,9 @@ type Measurer struct {
 	// RequestTimeout, when > 0, bounds one HTTP request. Zero means k6's own
 	// default of 60s.
 	RequestTimeout time.Duration
+	// MaxRedirects is how many redirects one request may follow. nil means k6's
+	// own default of 10; zero means follow none.
+	MaxRedirects *int
 	// Collectors, when set, observe the system under test's own metrics during
 	// every measurement (PLAN-OUTLINE.md §33).
 	Collectors []collect.Collector
@@ -142,6 +145,7 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		ClientCertFile:  m.ClientCertFile,
 		ClientKeyFile:   m.ClientKeyFile,
 		RequestTimeout:  m.RequestTimeout,
+		MaxRedirects:    m.MaxRedirects,
 		Collectors:      m.Collectors,
 	}
 

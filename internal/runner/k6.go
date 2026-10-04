@@ -55,6 +55,9 @@ type Spec struct {
 	ClientKeyFile  string
 	// RequestTimeout bounds one HTTP request. Zero means k6's own default.
 	RequestTimeout time.Duration
+	// MaxRedirects is how many redirects one request may follow. nil means k6's
+	// own default of 10; zero means follow none.
+	MaxRedirects *int
 	// Timeout bounds how long the k6 process may run. Zero means Duration plus
 	// DefaultGrace, which is generous enough never to fire on a healthy run and
 	// bounded enough that a wedged k6 cannot hang a pipeline forever.
@@ -386,6 +389,10 @@ func buildEnv(spec Spec, summaryPath string) ([]string, error) {
 	// was set unconditionally.
 	if spec.RequestTimeout > 0 {
 		env = append(env, "AUTOBENCH_REQUEST_TIMEOUT="+spec.RequestTimeout.String())
+	}
+	// Zero is a setting here, so presence is what matters rather than truthiness.
+	if spec.MaxRedirects != nil {
+		env = append(env, "AUTOBENCH_MAX_REDIRECTS="+strconv.Itoa(*spec.MaxRedirects))
 	}
 	// k6 reads the trust store from SSL_CERT_FILE, so a private CA is passed the
 	// way k6 itself expects rather than through the script.
