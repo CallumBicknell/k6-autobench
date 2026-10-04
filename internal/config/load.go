@@ -247,9 +247,9 @@ func (c *Config) validateAnalysis() error {
 }
 
 // validateCollectors checks the resource-collector settings. These are static
-// checks only: whether a Prometheus actually answers is discovered at run time
-// and reported as a note, because the target's monitoring being unreachable
-// must never fail a load test.
+// checks only: whether a source actually answers is discovered at run time and
+// reported as a note, because a target's monitoring being unreachable must never
+// fail a load test.
 func (c *Config) validateCollectors() error {
 	if c.Collectors.Interval.Duration < 0 {
 		return errors.New("collectors.interval must not be negative")
@@ -258,37 +258,103 @@ func (c *Config) validateCollectors() error {
 		return nil
 	}
 
-	seenSource := map[string]bool{}
-	for _, src := range c.Collectors.Prometheus {
-		if src.Name == "" {
-			return errors.New("collectors.prometheus[].name is required: it labels every series in the report")
-		}
-		if seenSource[src.Name] {
-			return fmt.Errorf("duplicate collectors.prometheus name %q: it labels every series, "+
-				"so it must be unique", src.Name)
-		}
-		seenSource[src.Name] = true
+	// A source name labels every series it produces, and two sources sharing one
+	// would produce report rows that cannot be told apart. So the names are
+	// claimed across every kind of collector at once.
+	names := &sourceNames{seen: map[string]bool{}}
 
-		if err := validatePrometheusURL(src); err != nil {
+	for _, src := range c.Collectors.Prometheus {
+		if err := names.claim("collectors.prometheus", src.Name); err != nil {
 			return err
 		}
-		if len(src.Queries) == 0 {
-			return fmt.Errorf("collectors.prometheus %q has no queries", src.Name)
+		if err := validatePrometheusSource(src); err != nil {
+			return err
 		}
+	}
 
-		seenQuery := map[string]bool{}
-		for _, q := range src.Queries {
-			if q.Name == "" {
-				return fmt.Errorf("collectors.prometheus %q has a query with no name", src.Name)
-			}
-			if seenQuery[q.Name] {
-				return fmt.Errorf("collectors.prometheus %q has two queries named %q", src.Name, q.Name)
-			}
-			seenQuery[q.Name] = true
+	for _, src := range c.Collectors.Docker {
+		if err := names.claim("collectors.docker", src.Name); err != nil {
+			return err
+		}
+		if strings.TrimSpace(src.Container) == "" {
+			return fmt.Errorf("collectors.docker %q has no container", src.Name)
+		}
+	}
 
-			if strings.TrimSpace(q.Query) == "" {
-				return fmt.Errorf("collectors.prometheus %q query %q has no expression", src.Name, q.Name)
-			}
+	for _, src := range c.Collectors.System {
+		if err := names.claim("collectors.system", src.Name); err != nil {
+			return err
+		}
+	}
+
+	for _, src := range c.Collectors.Kubernetes {
+		if err := names.claim("collectors.kubernetes", src.Name); err != nil {
+			return err
+		}
+		if err := validateKubernetesSource(src); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sourceNames tracks the names collectors have claimed, so two sources cannot
+// share one.
+type sourceNames struct{ seen map[string]bool }
+
+func (s *sourceNames) claim(kind, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s[].name is required: it labels every series in the report", kind)
+	}
+	if s.seen[name] {
+		return fmt.Errorf("duplicate collector name %q: it labels every series, "+
+			"so it must be unique across every kind of collector", name)
+	}
+	s.seen[name] = true
+	return nil
+}
+
+// validateKubernetesSource checks a cluster selection.
+func validateKubernetesSource(src KubernetesSource) error {
+	if strings.TrimSpace(src.URL) == "" {
+		return fmt.Errorf("collectors.kubernetes %q has no url", src.Name)
+	}
+	u, err := url.Parse(src.URL)
+	if err != nil {
+		return fmt.Errorf("collectors.kubernetes %q url %q is not valid: %w", src.Name, src.URL, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("collectors.kubernetes %q url %q must include a scheme and host",
+			src.Name, src.URL)
+	}
+	if src.Insecure && src.CAFile != "" {
+		return fmt.Errorf("collectors.kubernetes %q sets both insecure and ca_file; "+
+			"pick the one you mean", src.Name)
+	}
+	return nil
+}
+
+// validatePrometheusSource checks one Prometheus server and its queries.
+func validatePrometheusSource(src PrometheusSource) error {
+	if err := validatePrometheusURL(src); err != nil {
+		return err
+	}
+	if len(src.Queries) == 0 {
+		return fmt.Errorf("collectors.prometheus %q has no queries", src.Name)
+	}
+
+	seen := map[string]bool{}
+	for _, q := range src.Queries {
+		if strings.TrimSpace(q.Name) == "" {
+			return fmt.Errorf("collectors.prometheus %q has a query with no name", src.Name)
+		}
+		if seen[q.Name] {
+			return fmt.Errorf("collectors.prometheus %q has two queries named %q", src.Name, q.Name)
+		}
+		seen[q.Name] = true
+
+		if strings.TrimSpace(q.Query) == "" {
+			return fmt.Errorf("collectors.prometheus %q query %q has no expression", src.Name, q.Name)
 		}
 	}
 	return nil

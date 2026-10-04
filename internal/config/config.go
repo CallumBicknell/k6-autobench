@@ -248,10 +248,71 @@ type Collectors struct {
 	Interval Duration `yaml:"interval"`
 	// Prometheus lists Prometheus servers to poll for the system's own metrics.
 	Prometheus []PrometheusSource `yaml:"prometheus"`
+	// Docker lists containers to sample from the Docker daemon.
+	Docker []DockerSource `yaml:"docker"`
+	// System samples the host autobench itself runs on.
+	System []SystemSource `yaml:"system"`
+	// Kubernetes lists cluster selections to sample from the metrics API.
+	Kubernetes []KubernetesSource `yaml:"kubernetes"`
 }
 
 // Enabled reports whether any collector is configured.
-func (c Collectors) Enabled() bool { return len(c.Prometheus) > 0 }
+func (c Collectors) Enabled() bool {
+	return len(c.Prometheus) > 0 || len(c.Docker) > 0 || len(c.System) > 0 || len(c.Kubernetes) > 0
+}
+
+// DockerSource is one container to sample from the Docker daemon.
+//
+// It exists for the case Prometheus cannot cover: a target with no monitoring
+// installed at all. Everything Docker runs already exports CPU and memory.
+type DockerSource struct {
+	// Name identifies the container in the report, e.g. "api".
+	Name string `yaml:"name"`
+	// Container is the container's name or ID, as the daemon knows it.
+	Container string `yaml:"container"`
+	// Socket is the daemon's unix socket. Empty means $DOCKER_HOST (if it names
+	// a unix socket) or /var/run/docker.sock, following the docker CLI.
+	Socket string `yaml:"socket"`
+}
+
+// SystemSource samples the host autobench runs on.
+//
+// Be clear about what this is: it is the *load generator's* host. If the system
+// under test runs elsewhere, these readings say nothing about it; if it runs
+// here, the two are the same machine and the report cannot separate them.
+type SystemSource struct {
+	// Name identifies the host in the report, e.g. "generator".
+	Name string `yaml:"name"`
+	// Proc is where the kernel's counters are read from. Empty means /proc,
+	// which is where they are on Linux. It is configurable so a test can point
+	// at a fixture.
+	Proc string `yaml:"proc"`
+}
+
+// KubernetesSource samples pods from the cluster's metrics API.
+//
+// It is for a target whose cluster has no Prometheus: the metrics API is what
+// `kubectl top` reads, and it needs only API access.
+type KubernetesSource struct {
+	// Name identifies the workload in the report, e.g. "api".
+	Name string `yaml:"name"`
+	// URL is the API server's base URL, e.g. https://127.0.0.1:6443.
+	URL string `yaml:"url"`
+	// Token authenticates against the API server. Empty means
+	// $AUTOBENCH_K8S_TOKEN, then a service account token if one is mounted.
+	Token string `yaml:"token"`
+	// Namespace to read pod metrics from. Empty means "default".
+	Namespace string `yaml:"namespace"`
+	// Selector picks the pods to watch, e.g. "app=api". Empty means every pod in
+	// the namespace.
+	Selector string `yaml:"selector"`
+	// CAFile is a PEM bundle to verify the API server against. Empty means the
+	// system roots.
+	CAFile string `yaml:"ca_file"`
+	// Insecure skips verification of the API server's certificate. It is
+	// sometimes the only way to reach a cluster whose CA is not at hand.
+	Insecure bool `yaml:"insecure"`
+}
 
 // PrometheusSource is one Prometheus server to poll for the system under test's
 // own metrics.

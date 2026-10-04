@@ -147,7 +147,7 @@ func TestValidateCollectors(t *testing.T) {
 					PrometheusSource{Name: "api", URL: "http://localhost:9091",
 						Queries: []PrometheusQuery{{Name: "cpu", Query: "up"}}})
 			},
-			wantErr: "duplicate collectors.prometheus name",
+			wantErr: "duplicate collector name",
 		},
 		{
 			name: "a source with no url",
@@ -259,5 +259,199 @@ collectors:
 `)
 	if _, err := Load(path); err == nil {
 		t.Error("a misspelled collectors key should be rejected")
+	}
+}
+
+// TestLoadEveryCollectorKind covers the whole block: four kinds of source in one
+// config, decoded together.
+func TestLoadEveryCollectorKind(t *testing.T) {
+	path := writeConfig(t, `
+target:
+  base_url: http://localhost:3000
+run:
+  rate: 100
+  duration: 30s
+collectors:
+  interval: 5s
+  prometheus:
+    - name: api
+      url: http://localhost:9090
+      queries:
+        - name: cpu
+          query: up
+  docker:
+    - name: worker
+      container: my-worker
+      socket: /var/run/docker.sock
+  system:
+    - name: generator
+  kubernetes:
+    - name: cluster-api
+      url: https://127.0.0.1:6443
+      namespace: bench
+      selector: app=api
+      insecure: true
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := len(cfg.Collectors.Docker); got != 1 {
+		t.Fatalf("docker sources = %d, want 1", got)
+	}
+	d := cfg.Collectors.Docker[0]
+	if d.Name != "worker" || d.Container != "my-worker" || d.Socket != "/var/run/docker.sock" {
+		t.Errorf("docker source = %+v", d)
+	}
+
+	if got := len(cfg.Collectors.System); got != 1 || cfg.Collectors.System[0].Name != "generator" {
+		t.Errorf("system sources = %+v, want one named generator", cfg.Collectors.System)
+	}
+
+	if got := len(cfg.Collectors.Kubernetes); got != 1 {
+		t.Fatalf("kubernetes sources = %d, want 1", got)
+	}
+	k := cfg.Collectors.Kubernetes[0]
+	if k.Name != "cluster-api" || k.URL != "https://127.0.0.1:6443" ||
+		k.Namespace != "bench" || k.Selector != "app=api" || !k.Insecure {
+		t.Errorf("kubernetes source = %+v", k)
+	}
+}
+
+// TestValidateNewCollectors covers the static mistakes in the new kinds.
+func TestValidateNewCollectors(t *testing.T) {
+	valid := func() *Config {
+		c := &Config{
+			Target: Target{BaseURL: "http://localhost:3000"},
+			Run:    Run{Rate: 100, Duration: Duration{time.Second}},
+			Collectors: Collectors{
+				Docker: []DockerSource{{Name: "worker", Container: "w"}},
+				System: []SystemSource{{Name: "generator"}},
+			},
+		}
+		c.ApplyDefaults()
+		return c
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{"the valid case", func(*Config) {}, ""},
+		{
+			name: "a docker source with no container",
+			mutate: func(c *Config) {
+				c.Collectors.Docker[0].Container = "  "
+			},
+			wantErr: "has no container",
+		},
+		{
+			name: "a docker source with no name",
+			mutate: func(c *Config) {
+				c.Collectors.Docker[0].Name = ""
+			},
+			wantErr: "name is required",
+		},
+		{
+			name: "a system source with no name",
+			mutate: func(c *Config) {
+				c.Collectors.System[0].Name = ""
+			},
+			wantErr: "name is required",
+		},
+		{
+			name: "a kubernetes source with no url",
+			mutate: func(c *Config) {
+				c.Collectors.Kubernetes = []KubernetesSource{{Name: "cluster"}}
+			},
+			wantErr: "has no url",
+		},
+		{
+			name: "a kubernetes url with no scheme or host",
+			mutate: func(c *Config) {
+				c.Collectors.Kubernetes = []KubernetesSource{{Name: "cluster", URL: "localhost:6443"}}
+			},
+			wantErr: "must include a scheme and host",
+		},
+		{
+			name: "a kubernetes url that is not a url at all",
+			mutate: func(c *Config) {
+				c.Collectors.Kubernetes = []KubernetesSource{{Name: "cluster", URL: "127.0.0.1:6443"}}
+			},
+			wantErr: "is not valid",
+		},
+		{
+			name: "a kubernetes source setting both insecure and ca_file",
+			mutate: func(c *Config) {
+				c.Collectors.Kubernetes = []KubernetesSource{{
+					Name: "cluster", URL: "https://127.0.0.1:6443",
+					Insecure: true, CAFile: "/ca.pem",
+				}}
+			},
+			wantErr: "pick the one you mean",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid()
+			tc.mutate(cfg)
+
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate should have failed with %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCollectorNamesAreUniqueAcrossKinds: a Prometheus source and a Docker
+// source sharing a name would produce report rows that cannot be told apart, so
+// the names are claimed across every kind at once.
+func TestCollectorNamesAreUniqueAcrossKinds(t *testing.T) {
+	cfg := &Config{
+		Target: Target{BaseURL: "http://localhost:3000"},
+		Run:    Run{Rate: 100, Duration: Duration{time.Second}},
+		Collectors: Collectors{
+			Prometheus: []PrometheusSource{{
+				Name: "api", URL: "http://localhost:9090",
+				Queries: []PrometheusQuery{{Name: "cpu", Query: "up"}},
+			}},
+			Docker: []DockerSource{{Name: "api", Container: "my-api"}},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("a name shared between two kinds of collector should be rejected")
+	}
+	if !strings.Contains(err.Error(), "duplicate collector name") {
+		t.Errorf("error = %q, want it to name the clash", err)
+	}
+}
+
+// TestSystemCollectorEnablesCollecting keeps the system collector from being the
+// one kind that silently does nothing.
+func TestSystemCollectorEnablesCollecting(t *testing.T) {
+	cfg := &Config{Collectors: Collectors{System: []SystemSource{{Name: "generator"}}}}
+	if !cfg.Collectors.Enabled() {
+		t.Error("a configured system collector should enable collecting")
+	}
+	cfg.ApplyDefaults()
+	if cfg.Collectors.Interval.Duration != DefaultCollectInterval {
+		t.Errorf("interval = %v, want the default to be filled in", cfg.Collectors.Interval.Duration)
 	}
 }
