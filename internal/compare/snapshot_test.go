@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
 )
@@ -37,7 +39,7 @@ func fixedJSON(t *testing.T, target string, rate int, percentiles map[string]flo
 
 	body, err := json.Marshal(map[string]any{
 		"name": "demo", "target": target, "rate": rate,
-		"duration": int64(time.Second),
+		"duration": config.Duration{Duration: time.Second},
 		"verdict":  results.VerdictPass,
 		"metrics": metrics.Metrics{
 			HasLatency:  true,
@@ -73,7 +75,7 @@ func capacityJSON(t *testing.T, target string, capacity int, p95 float64, rate i
 				"index": 1, "phase": "validation", "rate": capacity, "pass": true,
 				"result": map[string]any{
 					"rate": capacity, "time_unit": "1s", "verdict": results.VerdictPass,
-					"duration": int64(time.Second),
+					"duration": config.Duration{Duration: time.Second},
 					"metrics": metrics.Metrics{
 						HasLatency:  true,
 						AvgMs:       p95 / 2,
@@ -109,6 +111,52 @@ func TestLoadFixedRun(t *testing.T) {
 	}
 	if len(s.Metrics.Endpoints) != 1 || s.Metrics.Endpoints[0].Name != "feed" {
 		t.Errorf("endpoints = %+v, want the per-request breakdown", s.Metrics.Endpoints)
+	}
+}
+
+// TestLoadFixedRunRoundTrip reads a file written the way `autobench run --json`
+// writes one: by marshalling the result type itself.
+//
+// This is the shape that matters, and the one the hand-built fixture above cannot
+// stand in for. A fixture that encodes a duration as a number agrees with any
+// reader, including one that only accepts numbers, so it passes while every
+// comparison of two real runs fails to parse. Marshalling the writer's own type
+// is what keeps the two sides from drifting apart.
+func TestLoadFixedRunRoundTrip(t *testing.T) {
+	res := results.Result{
+		Name:     "demo",
+		Target:   "http://a",
+		Rate:     500,
+		TimeUnit: "1s",
+		Duration: config.Duration{Duration: 30 * time.Second},
+		Verdict:  results.VerdictPass,
+		Metrics: metrics.Metrics{
+			HasLatency:  true,
+			AvgMs:       10,
+			Percentiles: []metrics.Percentile{{P: 95, Val: 20}},
+		},
+	}
+	body, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Pin the shape the reader has to accept, so that a change to the writer
+	// fails this test loudly instead of leaving it quietly checking a shape
+	// nothing emits any more.
+	if !strings.Contains(string(body), `"duration":"30s"`) {
+		t.Fatalf("the writer no longer emits a string duration, so this test no longer "+
+			"covers the real shape: %s", body)
+	}
+
+	s, err := Load(writeFile(t, "run.json", string(body)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Duration != 30*time.Second {
+		t.Errorf("duration = %v, want 30s", s.Duration)
+	}
+	if s.Kind != KindFixed || s.Rate != 500 || s.Target != "http://a" {
+		t.Errorf("snapshot = %+v, want the fixed-rate fields read", s)
 	}
 }
 

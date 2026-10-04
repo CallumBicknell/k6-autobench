@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
 	"github.com/callum/k6-autobench/internal/search"
@@ -101,11 +102,18 @@ func Load(path string) (*Snapshot, error) {
 }
 
 // fixedReport is the shape `autobench run --json` writes.
+//
+// Duration is a config.Duration, not a time.Duration, because that is what the
+// writer emits: `run --json` marshals a results.Result, whose Duration renders as
+// the compact string "30s". A plain time.Duration is an int64 in Go and cannot
+// read a JSON string back, so a reader using one rejects every file the writer
+// produces -- and only when something reads the file, which is exactly what
+// compare does. The two sides have to name the same type.
 type fixedReport struct {
 	Name      string                   `json:"name"`
 	Target    string                   `json:"target"`
 	Rate      int                      `json:"rate"`
-	Duration  time.Duration            `json:"duration"`
+	Duration  config.Duration          `json:"duration"`
 	ElapsedMs float64                  `json:"elapsed_ms"`
 	Metrics   metrics.Metrics          `json:"metrics"`
 	Verdict   results.Verdict          `json:"verdict"`
@@ -124,7 +132,7 @@ func loadFixed(path string, raw []byte) (*Snapshot, error) {
 		Target:             rep.Target,
 		Verdict:            rep.Verdict,
 		Rate:               rep.Rate,
-		Duration:           rep.Duration,
+		Duration:           rep.Duration.Duration,
 		Metrics:            rep.Metrics,
 		GeneratorSaturated: rep.Generator != nil && rep.Generator.Saturated,
 	}, nil

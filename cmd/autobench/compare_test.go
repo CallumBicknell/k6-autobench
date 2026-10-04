@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/callum/k6-autobench/internal/compare"
+	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
 )
@@ -21,7 +22,7 @@ func fixedResultJSON(t *testing.T, p95 float64) string {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"name": "demo", "target": "http://localhost:3000", "rate": 500,
-		"duration": int64(time.Second), "verdict": results.VerdictPass,
+		"duration": config.Duration{Duration: time.Second}, "verdict": results.VerdictPass,
 		"metrics": metrics.Metrics{
 			HasLatency:  true,
 			AvgMs:       p95 / 2,
