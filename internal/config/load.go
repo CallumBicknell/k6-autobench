@@ -278,16 +278,31 @@ func (c *Config) validateTargetTLS() error {
 		return errors.New("target.request_timeout must not be negative")
 	}
 
-	ca := strings.TrimSpace(c.Target.TLS.CAFile)
-	if ca == "" {
-		return nil
+	tls := c.Target.TLS
+	cert := strings.TrimSpace(tls.CertFile)
+	key := strings.TrimSpace(tls.KeyFile)
+	if (cert == "") != (key == "") {
+		// Half a client certificate is not a client certificate, and the
+		// handshake failure it produces names the certificate rather than the
+		// missing setting.
+		return errors.New(
+			"target.tls.cert_file and key_file must be given together")
 	}
-	info, err := os.Stat(ca)
-	if err != nil {
-		return fmt.Errorf("target.tls.ca_file: %w", err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("target.tls.ca_file %s is a directory, not a PEM bundle", ca)
+	for _, f := range []struct{ name, path string }{
+		{"target.tls.ca_file", strings.TrimSpace(tls.CAFile)},
+		{"target.tls.cert_file", cert},
+		{"target.tls.key_file", key},
+	} {
+		if f.path == "" {
+			continue
+		}
+		info, err := os.Stat(f.path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("%s %s is a directory, not a file", f.name, f.path)
+		}
 	}
 	return nil
 }

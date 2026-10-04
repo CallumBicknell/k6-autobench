@@ -162,6 +162,10 @@ type TargetTLS struct {
 	// system roots for the k6 process, which is what k6 itself does with
 	// SSL_CERT_FILE.
 	CAFile string `yaml:"ca_file"`
+	// CertFile and KeyFile are a client certificate and its key, for a target
+	// that authenticates the caller. Both must be given together.
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // Workload describes the HTTP work one iteration performs.

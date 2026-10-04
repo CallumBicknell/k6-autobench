@@ -45,8 +45,10 @@ type Measurer struct {
 	// measurement's own duration plus a grace period.
 	Timeout time.Duration
 	// InsecureTLS and CAFile configure how the target's certificate is treated.
-	InsecureTLS bool
-	CAFile      string
+	InsecureTLS    bool
+	CAFile         string
+	ClientCertFile string
+	ClientKeyFile  string
 	// RequestTimeout, when > 0, bounds one HTTP request. Zero means k6's own
 	// default of 60s.
 	RequestTimeout time.Duration
@@ -137,6 +139,8 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		Timeout:         m.Timeout,
 		InsecureTLS:     m.InsecureTLS,
 		CAFile:          m.CAFile,
+		ClientCertFile:  m.ClientCertFile,
+		ClientKeyFile:   m.ClientKeyFile,
 		RequestTimeout:  m.RequestTimeout,
 		Collectors:      m.Collectors,
 	}

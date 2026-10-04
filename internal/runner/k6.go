@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,11 @@ type Spec struct {
 	// CAFile is a PEM bundle to verify the target against. k6 reads it from
 	// SSL_CERT_FILE, so it replaces the system roots for this run.
 	CAFile string
+	// ClientCertFile and ClientKeyFile are a client certificate and its key, for
+	// a target that authenticates the caller. They are read here rather than by
+	// k6 because k6 takes them as PEM contents, not paths.
+	ClientCertFile string
+	ClientKeyFile  string
 	// RequestTimeout bounds one HTTP request. Zero means k6's own default.
 	RequestTimeout time.Duration
 	// Timeout bounds how long the k6 process may run. Zero means Duration plus
@@ -386,5 +392,41 @@ func buildEnv(spec Spec, summaryPath string) ([]string, error) {
 	if ca := strings.TrimSpace(spec.CAFile); ca != "" {
 		env = append(env, "SSL_CERT_FILE="+ca)
 	}
+	// A client certificate goes through the script: k6 takes tlsAuth as PEM
+	// contents, and maps it to the target by domain, so the host goes too.
+	if cert := strings.TrimSpace(spec.ClientCertFile); cert != "" {
+		host, err := targetHost(spec.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		certPEM, err := os.ReadFile(cert)
+		if err != nil {
+			return nil, fmt.Errorf("read client certificate: %w", err)
+		}
+		keyPEM, err := os.ReadFile(strings.TrimSpace(spec.ClientKeyFile))
+		if err != nil {
+			return nil, fmt.Errorf("read client key: %w", err)
+		}
+		env = append(env,
+			"AUTOBENCH_CLIENT_CERT="+string(certPEM),
+			"AUTOBENCH_CLIENT_KEY="+string(keyPEM),
+			"AUTOBENCH_TARGET_HOST="+host,
+		)
+	}
 	return env, nil
+}
+
+// targetHost is the hostname a client certificate is mapped to. k6's tlsAuth is
+// keyed by domain, and its JavaScript runtime has no URL parser to derive one
+// from the base URL.
+func targetHost(baseURL string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse target URL %q: %w", baseURL, err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("target URL %q has no host to map a client certificate to", baseURL)
+	}
+	return host, nil
 }

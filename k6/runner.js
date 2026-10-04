@@ -30,6 +30,23 @@ const SUMMARY_PATH = __ENV.AUTOBENCH_SUMMARY_PATH || '';
 // and k6 verifies by default, so the switch is passed through rather than assumed.
 const INSECURE_TLS = (__ENV.AUTOBENCH_INSECURE_TLS || 'false') === 'true';
 const REQUEST_TIMEOUT = __ENV.AUTOBENCH_REQUEST_TIMEOUT || '';
+// A target that authenticates the caller needs a client certificate, which k6
+// takes as PEM contents rather than as a path.
+const CLIENT_CERT = __ENV.AUTOBENCH_CLIENT_CERT || '';
+const CLIENT_KEY = __ENV.AUTOBENCH_CLIENT_KEY || '';
+// k6 maps a client certificate to a set of domains, and its runtime has no URL
+// parser, so the host is derived from the base URL on the Go side.
+const TARGET_HOST = __ENV.AUTOBENCH_TARGET_HOST || '';
+
+// tlsAuthOptions is a client certificate mapped to the target's host, or nothing
+// when none is configured. It is a global option in k6 rather than a request
+// parameter, and an entry without domains is not applied at all.
+function tlsAuthOptions() {
+  if (!CLIENT_CERT || !CLIENT_KEY || !TARGET_HOST) {
+    return {};
+  }
+  return { tlsAuth: [{ domains: [TARGET_HOST], cert: CLIENT_CERT, key: CLIENT_KEY }] };
+}
 
 // k6 emits one value per requested stat; "med" is the p50 alias.
 const trendStats = ['avg', 'min', 'max', 'med'].concat(
@@ -67,6 +84,7 @@ export const options = {
   summaryTrendStats: trendStats,
   thresholds: submetricThresholds(),
   insecureSkipTLSVerify: INSECURE_TLS,
+  ...tlsAuthOptions(),
 };
 
 // Pre-compute a cumulative-weight table so each iteration picks a request with

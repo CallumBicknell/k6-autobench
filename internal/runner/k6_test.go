@@ -166,6 +166,13 @@ func TestBuildEnvLeavesTLSSettingsAloneByDefault(t *testing.T) {
 			t.Errorf("SSL_CERT_FILE was set without a ca_file: %s", kv)
 		}
 	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "AUTOBENCH_CLIENT_CERT=") ||
+			strings.HasPrefix(kv, "AUTOBENCH_CLIENT_KEY=") ||
+			strings.HasPrefix(kv, "AUTOBENCH_TARGET_HOST=") {
+			t.Errorf("a client certificate was passed without one being configured: %s", kv)
+		}
+	}
 }
 
 func TestBuildEnvCarriesEverythingElse(t *testing.T) {

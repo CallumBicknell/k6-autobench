@@ -741,6 +741,7 @@ target:
   tls:                   # optional; for a target the system roots do not cover
     insecure: true       # accept any certificate
     # ca_file: /etc/ssl/private-ca.pem   # or verify against a bundle
+    # cert_file: /etc/ssl/client.pem    # or present a client certificate
 
 workload:
   type: http
@@ -806,6 +807,8 @@ target:
   tls:
     ca_file: /etc/ssl/private-ca.pem   # verify against a bundle
     # insecure: true                   # or turn verification off entirely
+    # cert_file: /etc/ssl/client.pem   # if the target authenticates the caller
+    # key_file:  /etc/ssl/client.key
 ```
 
 `ca_file` is the better option where the CA is known: it tells autobench what to
@@ -814,6 +817,12 @@ which is how k6 itself reads a custom trust store, so it *replaces* the system
 roots for the run. A path that does not exist is caught before the run starts,
 because the alternative is an empty trust store and a failure that names the
 certificate rather than the typo.
+
+`cert_file` and `key_file` are a client certificate, for a target that
+authenticates *the caller* — mTLS. Both must be given together, and both are
+checked before the run. The certificate is mapped to the target's host, which
+autobench takes from `base_url`: k6 keys a client certificate by domain, so a
+target reached by a different name would not present it.
 
 `request_timeout` bounds one HTTP request. k6's own default is 60s, which is far
 longer than a probe: a target that hangs makes the probe last a minute rather than

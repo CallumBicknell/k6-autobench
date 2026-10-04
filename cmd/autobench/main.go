@@ -197,6 +197,8 @@ func runCommand(args []string) int {
 		Timeout:         cfg.Run.K6Timeout.Duration,
 		InsecureTLS:     cfg.Target.TLS.Insecure,
 		CAFile:          cfg.Target.TLS.CAFile,
+		ClientCertFile:  cfg.Target.TLS.CertFile,
+		ClientKeyFile:   cfg.Target.TLS.KeyFile,
 		RequestTimeout:  cfg.Target.RequestTimeout.Duration,
 		Collectors:      buildCollectors(cfg),
 	}
