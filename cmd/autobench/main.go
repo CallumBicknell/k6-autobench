@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -141,6 +142,7 @@ func runCommand(args []string) int {
 		scriptPath string
 		jsonOut    string
 		htmlOut    string
+		outDir     string
 		noColor    bool
 	)
 	fs.StringVar(&ov.configPath, "config", "", "path to a YAML config file")
@@ -156,6 +158,7 @@ func runCommand(args []string) int {
 	fs.StringVar(&scriptPath, "script", "", "override the embedded k6 workload script")
 	fs.StringVar(&jsonOut, "json", "", "write the full result as JSON to this path")
 	fs.StringVar(&htmlOut, "html", "", "write a self-contained HTML report to this path")
+	fs.StringVar(&outDir, "out-dir", "", "write the config, result, summary and HTML report to this directory")
 	fs.BoolVar(&noColor, "no-color", false, "disable coloured output")
 	registerAnalysisFlags(fs, &ov)
 	fs.Usage = func() { runUsage(fs) }
@@ -258,11 +261,87 @@ func runCommand(args []string) int {
 			return exitError
 		}
 	}
+	if outDir != "" {
+		if err := writeRunArtifacts(outDir, ov.configPath, cfg, res); err != nil {
+			fmt.Fprintln(os.Stderr, "autobench: "+err.Error())
+			return exitError
+		}
+	}
 
 	if verdict.OK() {
 		return exitPass
 	}
 	return exitFail
+}
+
+// writeRunArtifacts persists a fixed run the way a search is persisted
+// (PLAN-OUTLINE.md §26): the source config, the full result, a compact summary and
+// the HTML report. There is no probes/ directory, because a fixed run takes one
+// measurement.
+func writeRunArtifacts(dir, configPath string, cfg *config.Config, res *results.Result) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	// A rerun into the same directory must not leave the previous one's files
+	// beside a manifest that did not come from them.
+	if err := clearStaleArtifacts(dir); err != nil {
+		return fmt.Errorf("clear %s: %w", dir, err)
+	}
+
+	if configPath != "" {
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", configPath, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), raw, 0o644); err != nil {
+			return fmt.Errorf("write config.yaml: %w", err)
+		}
+	}
+
+	if err := writeJSONFile(filepath.Join(dir, "manifest.json"), res); err != nil {
+		return err
+	}
+	if err := writeJSONFile(filepath.Join(dir, "summary.json"), summariseRun(res)); err != nil {
+		return err
+	}
+	return writeHTMLFile(filepath.Join(dir, "report.html"), func(w io.Writer) error {
+		return report.RenderHTML(w, cfg, res, version)
+	})
+}
+
+// runSummary is the compact, CI-friendly form of a fixed run.
+type runSummary struct {
+	Name           string               `json:"name"`
+	Target         string               `json:"target"`
+	Verdict        results.Verdict      `json:"verdict"`
+	Rate           int                  `json:"rate"`
+	TimeUnit       string               `json:"time_unit"`
+	DurationMs     float64              `json:"duration_ms"`
+	Requests       int64                `json:"requests"`
+	FailedRequests int64                `json:"failed_requests"`
+	ErrorRate      float64              `json:"error_rate"`
+	AvgMs          float64              `json:"latency_avg_ms"`
+	Percentiles    []metrics.Percentile `json:"latency_percentiles_ms,omitempty"`
+	Failures       []results.Failure    `json:"failures,omitempty"`
+	ElapsedMs      float64              `json:"elapsed_ms"`
+}
+
+func summariseRun(res *results.Result) runSummary {
+	return runSummary{
+		Name:           res.Name,
+		Target:         res.Target,
+		Verdict:        res.Verdict,
+		Rate:           res.Rate,
+		TimeUnit:       res.TimeUnit,
+		DurationMs:     res.Duration.Duration.Seconds() * 1000,
+		Requests:       res.Metrics.Requests,
+		FailedRequests: res.Metrics.FailedRequests,
+		ErrorRate:      res.Metrics.ErrorRate,
+		AvgMs:          res.Metrics.AvgMs,
+		Percentiles:    res.Metrics.Percentiles,
+		Failures:       res.Failures,
+		ElapsedMs:      res.ElapsedMs,
+	}
 }
 
 // parseFlags parses args, allowing the config-path positional to appear before

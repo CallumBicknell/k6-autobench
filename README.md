@@ -124,6 +124,7 @@ about the system. Set at least `thresholds.error_rate`.
 | `--k6-timeout` | Kill k6 if it runs longer than this (default: the duration plus a grace period) |
 | `--json` | Write the full result as JSON |
 | `--html` | Write a self-contained HTML report |
+| `--out-dir` | Write the config, result, summary and HTML report to a directory |
 | `--no-color` | Disable coloured output |
 
 `autobench capacity` additionally accepts:

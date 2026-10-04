@@ -1,14 +1,119 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/callum/k6-autobench/internal/config"
+	"github.com/callum/k6-autobench/internal/metrics"
+	"github.com/callum/k6-autobench/internal/results"
 	"github.com/callum/k6-autobench/internal/search"
 )
+
+// runResult is a fixed run's result.
+func runResult() *results.Result {
+	return &results.Result{
+		Name:     "demo",
+		Target:   "http://localhost:3000",
+		Rate:     100,
+		TimeUnit: "1s",
+		Duration: config.Duration{Duration: 5 * time.Second},
+		Verdict:  results.VerdictPass,
+		Metrics: metrics.Metrics{
+			HasLatency:  true,
+			AvgMs:       0.5,
+			Percentiles: []metrics.Percentile{{P: 95, Val: 0.8}},
+			Requests:    500,
+			ErrorRate:   0,
+		},
+	}
+}
+
+// TestRunOutDirWritesTheSameShapeAsASearch: §26 describes one stored layout, and a
+// fixed run had no way to produce it -- only --json and --html.
+func TestRunOutDirWritesTheSameShapeAsASearch(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeRunArtifacts(dir, "", artifactConfig(), runResult()); err != nil {
+		t.Fatalf("writeRunArtifacts: %v", err)
+	}
+
+	for _, name := range []string{"manifest.json", "summary.json", "report.html"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s missing: %v", name, err)
+		}
+	}
+	// A fixed run takes one measurement, so there is nothing to put in probes/.
+	if _, err := os.Stat(filepath.Join(dir, "probes")); !os.IsNotExist(err) {
+		t.Errorf("probes/ exists for a fixed run (err=%v)", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "summary.json"))
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("parse summary: %v", err)
+	}
+	for _, key := range []string{"name", "verdict", "requests", "failed_requests", "rate"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("summary has no %q: %s", key, raw)
+		}
+	}
+}
+
+// TestRunOutDirCopiesTheConfigWhenItHasOne.
+func TestRunOutDirCopiesTheConfigWhenItHasOne(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "bench.yaml")
+	if err := os.WriteFile(src, []byte("name: demo\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := writeRunArtifacts(dir, src, artifactConfig(), runResult()); err != nil {
+		t.Fatalf("writeRunArtifacts: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if string(got) != "name: demo\n" {
+		t.Errorf("config.yaml = %q, want the source config", got)
+	}
+}
+
+// TestRunOutDirClearsAnEarlierRun: the same rule as a search's --out-dir, so a
+// rerun does not leave two runs in one directory.
+func TestRunOutDirClearsAnEarlierRun(t *testing.T) {
+	dir := t.TempDir()
+
+	// Something a previous search left behind, and something of the user's own.
+	if err := os.MkdirAll(filepath.Join(dir, "probes"), 0o755); err != nil {
+		t.Fatalf("mkdir probes: %v", err)
+	}
+	stale := filepath.Join(dir, "probes", "001-exponential-100.json")
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write stale probe: %v", err)
+	}
+	mine := filepath.Join(dir, "NOTES.txt")
+	if err := os.WriteFile(mine, []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+
+	if err := writeRunArtifacts(dir, "", artifactConfig(), runResult()); err != nil {
+		t.Fatalf("writeRunArtifacts: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("a previous run's probe survived (err=%v)", err)
+	}
+	if _, err := os.Stat(mine); err != nil {
+		t.Errorf("the user's own file was removed: %v", err)
+	}
+}
 
 // artifactConfig is the minimum a capacity report needs to render.
 func artifactConfig() *config.Config {
