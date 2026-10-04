@@ -110,6 +110,16 @@ func (c *Config) ApplyDefaults() {
 	}
 
 	c.applySearchDefaults()
+	c.applyCollectorDefaults()
+}
+
+// applyCollectorDefaults fills in the sampling interval, but only when a
+// collector is actually configured: a run with no collectors should not claim a
+// sampling interval it never used.
+func (c *Config) applyCollectorDefaults() {
+	if c.Collectors.Enabled() && c.Collectors.Interval.Duration == 0 {
+		c.Collectors.Interval.Duration = DefaultCollectInterval
+	}
 }
 
 // applySearchDefaults fills in the capacity-search parameters. start_rate falls
@@ -158,6 +168,9 @@ func (c *Config) ValidateMode(mode Mode) error {
 		return err
 	}
 	if err := c.validateAnalysis(); err != nil {
+		return err
+	}
+	if err := c.validateCollectors(); err != nil {
 		return err
 	}
 	if c.LoadGenerator.MaxVUs < c.LoadGenerator.PreAllocatedVUs {
@@ -229,6 +242,71 @@ func (c *Config) validateAnalysis() error {
 	}
 	if c.Analysis.RequireAllWindowsPass && c.Analysis.Window.Duration <= 0 {
 		return errors.New("analysis.require_all_windows_pass needs analysis.window to be set")
+	}
+	return nil
+}
+
+// validateCollectors checks the resource-collector settings. These are static
+// checks only: whether a Prometheus actually answers is discovered at run time
+// and reported as a note, because the target's monitoring being unreachable
+// must never fail a load test.
+func (c *Config) validateCollectors() error {
+	if c.Collectors.Interval.Duration < 0 {
+		return errors.New("collectors.interval must not be negative")
+	}
+	if !c.Collectors.Enabled() {
+		return nil
+	}
+
+	seenSource := map[string]bool{}
+	for _, src := range c.Collectors.Prometheus {
+		if src.Name == "" {
+			return errors.New("collectors.prometheus[].name is required: it labels every series in the report")
+		}
+		if seenSource[src.Name] {
+			return fmt.Errorf("duplicate collectors.prometheus name %q: it labels every series, "+
+				"so it must be unique", src.Name)
+		}
+		seenSource[src.Name] = true
+
+		if err := validatePrometheusURL(src); err != nil {
+			return err
+		}
+		if len(src.Queries) == 0 {
+			return fmt.Errorf("collectors.prometheus %q has no queries", src.Name)
+		}
+
+		seenQuery := map[string]bool{}
+		for _, q := range src.Queries {
+			if q.Name == "" {
+				return fmt.Errorf("collectors.prometheus %q has a query with no name", src.Name)
+			}
+			if seenQuery[q.Name] {
+				return fmt.Errorf("collectors.prometheus %q has two queries named %q", src.Name, q.Name)
+			}
+			seenQuery[q.Name] = true
+
+			if strings.TrimSpace(q.Query) == "" {
+				return fmt.Errorf("collectors.prometheus %q query %q has no expression", src.Name, q.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// validatePrometheusURL checks a source's base URL, since a typo there is a
+// configuration mistake rather than something to discover mid-run.
+func validatePrometheusURL(src PrometheusSource) error {
+	if src.URL == "" {
+		return fmt.Errorf("collectors.prometheus %q has no url", src.Name)
+	}
+	u, err := url.Parse(src.URL)
+	if err != nil {
+		return fmt.Errorf("collectors.prometheus %q url %q is not valid: %w", src.Name, src.URL, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("collectors.prometheus %q url %q must include a scheme and host",
+			src.Name, src.URL)
 	}
 	return nil
 }

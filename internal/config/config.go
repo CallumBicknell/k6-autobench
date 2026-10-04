@@ -63,6 +63,11 @@ const (
 	// defaultIterationMs is the per-iteration latency assumed when sizing the VU
 	// pool before anything has been measured.
 	defaultIterationMs = 100
+	// DefaultCollectInterval is how often collector queries are sampled when the
+	// configuration does not say. It is deliberately longer than a typical
+	// window, so a reading lands in every window without hammering the
+	// monitoring server.
+	DefaultCollectInterval = 5 * time.Second
 )
 
 // Config is the root of an autobench configuration file.
@@ -77,6 +82,7 @@ type Config struct {
 	Analysis      Analysis      `yaml:"analysis"`
 	Validation    Validation    `yaml:"validation"`
 	LoadGenerator LoadGenerator `yaml:"load_generator"`
+	Collectors    Collectors    `yaml:"collectors"`
 
 	// preAllocatedExplicit and maxVUsExplicit record whether the user pinned the
 	// VU pool. When they did not, the capacity search re-sizes the pool for
@@ -228,6 +234,52 @@ type Validation struct {
 	Rate         string   `yaml:"rate"`
 	Duration     Duration `yaml:"duration"`
 	SafetyMargin float64  `yaml:"safety_margin"`
+}
+
+// Collectors configures the resource collectors that observe the system under
+// test while a measurement runs (PLAN-OUTLINE.md §33).
+//
+// k6 only ever sees the client side of a request. Collectors add the server
+// side, so a report can say what the system was doing when it ran out of
+// capacity instead of only how slow it got.
+type Collectors struct {
+	// Interval is how often every query is sampled. Defaults to
+	// DefaultCollectInterval.
+	Interval Duration `yaml:"interval"`
+	// Prometheus lists Prometheus servers to poll for the system's own metrics.
+	Prometheus []PrometheusSource `yaml:"prometheus"`
+}
+
+// Enabled reports whether any collector is configured.
+func (c Collectors) Enabled() bool { return len(c.Prometheus) > 0 }
+
+// PrometheusSource is one Prometheus server to poll for the system under test's
+// own metrics.
+type PrometheusSource struct {
+	// Name identifies the server in the report, e.g. "api" or "postgres".
+	Name string `yaml:"name"`
+	// URL is the server's base URL, e.g. http://localhost:9090. A path prefix is
+	// kept, so a Prometheus behind a reverse proxy works.
+	URL string `yaml:"url"`
+	// Queries are the expressions sampled on every interval, in report order.
+	Queries []PrometheusQuery `yaml:"queries"`
+}
+
+// PrometheusQuery is one PromQL instant query sampled on the collector interval.
+//
+// It is a list rather than a map so the report keeps the order the queries were
+// written in; a report that reorders its own rows between runs is not worth
+// having.
+type PrometheusQuery struct {
+	// Name labels the series in the report, e.g. "cpu". It must be unique within
+	// its source, because it is what the report calls the row.
+	Name string `yaml:"name"`
+	// Query is the PromQL expression, e.g. rate(process_cpu_seconds_total[1m]).
+	Query string `yaml:"query"`
+	// Unit is a free-text label for the rendered value. "bytes" is shown in
+	// binary units and "percent" with a percent sign; anything else is appended
+	// to the number as written.
+	Unit string `yaml:"unit"`
 }
 
 // Mode selects what the CLI does with a configuration.
