@@ -5,6 +5,7 @@ package results
 import (
 	"time"
 
+	"github.com/callum/k6-autobench/internal/collect"
 	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 )
@@ -77,4 +78,8 @@ type Result struct {
 	// WindowFailures holds SLO breaches found in individual windows. They only
 	// affect the verdict when the validation requires every window to pass.
 	WindowFailures []Failure `json:"window_failures,omitempty"`
+	// System holds what the resource collectors saw of the system under test
+	// while this measurement ran (PLAN-OUTLINE.md §33). It is diagnostic: it
+	// never affects the verdict. Empty when no collector is configured.
+	System collect.Report `json:"system,omitzero"`
 }

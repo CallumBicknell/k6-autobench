@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/callum/k6-autobench/internal/collect"
 	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
@@ -40,6 +41,9 @@ type Measurer struct {
 	MaxVUGrowth int
 	// Window, when > 0, enables per-window aggregates for every measurement.
 	Window time.Duration
+	// Collectors, when set, observe the system under test's own metrics during
+	// every measurement (PLAN-OUTLINE.md §33).
+	Collectors []collect.Collector
 	// OnProgress receives human-readable notices such as warmup and VU growth.
 	OnProgress func(string)
 
@@ -121,6 +125,7 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		MaxVUs:          plan.Max,
 		Percentiles:     m.Config.Percentiles,
 		Window:          m.Window,
+		Collectors:      m.Collectors,
 	}
 
 	started := time.Now()
@@ -162,5 +167,6 @@ func (m *Measurer) measure(ctx context.Context, rate int, duration time.Duration
 		Generator:      gen,
 		Windows:        outcome.Windows,
 		WindowFailures: windowFailures,
+		System:         outcome.System,
 	}, nil
 }

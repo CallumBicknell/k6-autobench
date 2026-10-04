@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/callum/k6-autobench/internal/collect"
 	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	"github.com/callum/k6-autobench/internal/results"
@@ -22,11 +23,20 @@ type fakeRunner struct {
 	// windows is returned alongside every summary, standing in for k6's
 	// per-sample stream.
 	windows []metrics.Window
+	// onRun, when set, sees each spec, standing in for the runner's own work
+	// around the k6 process (starting collectors, for instance).
+	onRun func(spec runner.Spec)
+	// system is returned alongside every summary, standing in for what a real
+	// runner collected from the system under test.
+	system collect.Report
 }
 
 func (f *fakeRunner) Run(_ context.Context, spec runner.Spec) (*runner.Outcome, error) {
 	call := len(f.calls)
 	f.calls = append(f.calls, spec)
+	if f.onRun != nil {
+		f.onRun(spec)
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -39,7 +49,7 @@ func (f *fakeRunner) Run(_ context.Context, spec runner.Spec) (*runner.Outcome, 
 	if summary == nil {
 		return nil, errors.New("k6 failed")
 	}
-	return &runner.Outcome{Summary: summary, Windows: f.windows}, nil
+	return &runner.Outcome{Summary: summary, Windows: f.windows, System: f.system}, nil
 }
 
 // passSummary is a k6 summary for a run that met the target rate and breached
@@ -317,6 +327,55 @@ func TestMeasurePropagatesRunnerError(t *testing.T) {
 	m := &Measurer{Config: testConfig(), Runner: &fakeRunner{err: boom}}
 	if _, err := m.Measure(context.Background(), 100, time.Second); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want %v", err, boom)
+	}
+}
+
+// TestMeasureCarriesCollectorsThrough checks the configured collectors reach
+// the measurement, and that their readings come back on the result. Without
+// this the wiring is only exercised by an end-to-end run.
+func TestMeasureCarriesCollectorsThrough(t *testing.T) {
+	fake := &fakeRunner{}
+	// Stand in for the runner: the spec the measurer built is what a real
+	// runner would use to start observing.
+	observed := &stubCollector{name: "api"}
+	fake.onRun = func(spec runner.Spec) {
+		if len(spec.Collectors) != 1 || spec.Collectors[0].Name() != "api" {
+			t.Errorf("spec.Collectors = %v, want the configured collector", spec.Collectors)
+		}
+		// Emulate what the runner returns after observing.
+		fake.system = spec.Collectors[0].Start(context.Background())()
+	}
+
+	m := &Measurer{Config: testConfig(), Runner: fake, Collectors: []collect.Collector{observed}}
+	res, err := m.Measure(context.Background(), 100, time.Second)
+	if err != nil {
+		t.Fatalf("Measure: %v", err)
+	}
+	if !observed.started {
+		t.Error("the collector should have been started")
+	}
+	if len(res.System.Series) != 1 || res.System.Series[0].Name != "cpu" {
+		t.Errorf("System = %+v, want the collector's reading on the result", res.System)
+	}
+}
+
+// stubCollector is a collector that reports one series, so the measurer's
+// wiring can be checked without a monitoring endpoint.
+type stubCollector struct {
+	name    string
+	started bool
+}
+
+func (s *stubCollector) Name() string { return s.name }
+
+func (s *stubCollector) Start(context.Context) func() collect.Report {
+	s.started = true
+	return func() collect.Report {
+		return collect.Report{Series: []collect.Series{{
+			Source:  s.name,
+			Name:    "cpu",
+			Samples: []collect.Sample{{OffsetMs: 0, Value: 0.5}},
+		}}}
 	}
 }
 

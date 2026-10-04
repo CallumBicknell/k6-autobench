@@ -153,6 +153,9 @@ func runCommand(args []string) int {
 
 	fmt.Fprintf(os.Stderr, "autobench: %d iterations/%s for %s against %s\n",
 		cfg.Run.Rate, cfg.Run.TimeUnit, cfg.Run.Duration, cfg.Target.BaseURL)
+	if notice := collectorNotice(cfg); notice != "" {
+		fmt.Fprintf(os.Stderr, "autobench: sampling %s\n", notice)
+	}
 
 	r := &runner.Runner{K6Path: k6Path, ScriptPath: scriptPath}
 	spec := runner.Spec{
@@ -165,6 +168,7 @@ func runCommand(args []string) int {
 		MaxVUs:          cfg.LoadGenerator.MaxVUs,
 		Percentiles:     cfg.Percentiles,
 		Window:          cfg.Analysis.Window.Duration,
+		Collectors:      buildCollectors(cfg),
 	}
 
 	started := time.Now()
@@ -202,6 +206,7 @@ func runCommand(args []string) int {
 		Raw:            outcome.Summary.Metrics,
 		Windows:        outcome.Windows,
 		WindowFailures: windowFailures,
+		System:         outcome.System,
 	}
 
 	color := !noColor && os.Getenv("NO_COLOR") == "" && isTerminal(os.Stdout)

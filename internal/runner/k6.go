@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/callum/k6-autobench/internal/collect"
 	"github.com/callum/k6-autobench/internal/config"
 	"github.com/callum/k6-autobench/internal/metrics"
 	k6script "github.com/callum/k6-autobench/k6"
@@ -37,6 +38,10 @@ type Spec struct {
 	// per-window aggregates alongside the summary. It costs a sample file
 	// proportional to rate x duration, so it is opt-in.
 	Window time.Duration
+	// Collectors, when set, observe the system under test while k6 runs, so the
+	// result carries the server-side view alongside k6's client-side one
+	// (PLAN-OUTLINE.md §33).
+	Collectors []collect.Collector
 }
 
 // Outcome is what one k6 invocation produced.
@@ -44,6 +49,10 @@ type Outcome struct {
 	Summary *metrics.Summary
 	// Windows holds per-window aggregates; empty unless Spec.Window was set.
 	Windows []metrics.Window
+	// System holds what the configured collectors saw of the system under test
+	// while this measurement ran. Empty when no collector is configured, and
+	// advisory either way: a collector can never fail a measurement.
+	System collect.Report
 }
 
 // Runner executes k6.
@@ -115,7 +124,16 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 		cmd.Stderr = stderr
 	}
 
-	if err := cmd.Run(); err != nil {
+	// Start observing before k6 does, so the collectors' timelines bracket the
+	// measurement rather than starting partway into it.
+	stopObserving := observe(ctx, spec.Collectors)
+
+	runErr := cmd.Run()
+	// Always stop, even on failure: leaving the sampling goroutines running
+	// would leak them into the next measurement.
+	system := stopObserving()
+
+	if runErr != nil {
 		var parts []string
 		if out := stdout.Tail(20); out != "" {
 			parts = append(parts, "k6 stdout:\n"+out)
@@ -124,9 +142,9 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 			parts = append(parts, "k6 output:\n"+out)
 		}
 		if len(parts) > 0 {
-			return nil, fmt.Errorf("k6 run failed: %w\n%s", err, strings.Join(parts, "\n"))
+			return nil, fmt.Errorf("k6 run failed: %w\n%s", runErr, strings.Join(parts, "\n"))
 		}
-		return nil, fmt.Errorf("k6 run failed: %w", err)
+		return nil, fmt.Errorf("k6 run failed: %w", runErr)
 	}
 
 	raw, err := os.ReadFile(summaryPath)
@@ -139,7 +157,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 		return nil, fmt.Errorf("parse k6 summary: %w", err)
 	}
 
-	out := &Outcome{Summary: &summary}
+	out := &Outcome{Summary: &summary, System: system}
 	if samplesPath != "" {
 		windows, err := readSamples(samplesPath, spec)
 		if err != nil {
@@ -148,6 +166,34 @@ func (r *Runner) Run(ctx context.Context, spec Spec) (*Outcome, error) {
 		out.Windows = windows
 	}
 	return out, nil
+}
+
+// observe starts every configured collector and returns the function that stops
+// them and folds their readings into one report.
+//
+// Collector failures are advisory by design. The target's monitoring being
+// unreachable says nothing about the target's capacity, so a collector reports
+// what it could not read and the measurement carries on: a load test that
+// errors because Prometheus is down would be worse than useless.
+func observe(ctx context.Context, collectors []collect.Collector) func() collect.Report {
+	if len(collectors) == 0 {
+		return func() collect.Report { return collect.Report{} }
+	}
+
+	stops := make([]func() collect.Report, 0, len(collectors))
+	for _, c := range collectors {
+		stops = append(stops, c.Start(ctx))
+	}
+
+	return func() collect.Report {
+		var out collect.Report
+		// Stop in reverse, so the observation windows nest around the
+		// measurement rather than one source cutting another short.
+		for i := len(stops) - 1; i >= 0; i-- {
+			out.Merge(stops[i]())
+		}
+		return out
+	}
 }
 
 // readSamples parses the JSON-lines sample stream k6 wrote. The temp directory

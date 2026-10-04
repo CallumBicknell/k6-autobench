@@ -104,7 +104,11 @@ func runCapacity(cfg *config.Config, ov overrides, k6Path, scriptPath, jsonOut, 
 		Warmup:      cfg.Search.Warmup.Duration,
 		MaxVUGrowth: cfg.Search.MaxVUGrowth,
 		Window:      cfg.Analysis.Window.Duration,
+		Collectors:  buildCollectors(cfg),
 		OnProgress:  func(msg string) { fmt.Fprintln(os.Stderr, "autobench: "+msg) },
+	}
+	if notice := collectorNotice(cfg); notice != "" {
+		fmt.Fprintf(os.Stderr, "autobench: sampling %s per probe\n", notice)
 	}
 
 	scfg := search.Config{
