@@ -298,15 +298,21 @@ func change(metric, unit string, before, after, tolerance float64, higherIsWorse
 		return c
 	}
 
-	// The breach is measured on the size of the movement. From a zero baseline a
-	// percentage change is infinite, so the absolute movement is the only thing
-	// left to judge.
+	// The breach is measured on the size of the movement.
 	switch {
 	case b == basisAbsolute:
+		// The tolerance is already in the metric's own units, so the raw
+		// movement is what it applies to.
 		c.Regression = after-before > tolerance
 	case c.PercentMeaningful:
 		c.Regression = math.Abs(c.Percent) > tolerance
 	default:
+		// A relative tolerance against a zero baseline: there is no scale to be
+		// relative to, so the tolerance is read against the raw movement
+		// instead. That is dimensionally loose -- milliseconds judged against a
+		// ratio -- and deliberately so: it is conservative in effect, treating
+		// any movement off zero as a regression, which is the safer way to be
+		// wrong about a metric that has just appeared where there was none.
 		c.Regression = after-before > tolerance
 	}
 	return c
