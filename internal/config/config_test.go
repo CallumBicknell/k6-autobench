@@ -652,3 +652,123 @@ func TestValidationRateOverride(t *testing.T) {
 		}
 	}
 }
+
+// TestOperatingPolicyValidation rejects a policy that could not mean anything.
+func TestOperatingPolicyValidation(t *testing.T) {
+	valid := func() *Config {
+		cfg := &Config{Target: Target{BaseURL: "http://localhost:3000"}}
+		cfg.Search.StartRate = 2000
+		cfg.ApplyDefaults()
+		return cfg
+	}
+
+	t.Run("a fraction of capacity", func(t *testing.T) {
+		cfg := valid()
+		cfg.OperatingPolicy.MaxUtilizationOfCapacity = 0.8
+		if err := cfg.ValidateMode(ModeCapacity); err != nil {
+			t.Errorf("0.8 should be accepted: %v", err)
+		}
+	})
+
+	t.Run("above capacity is rejected", func(t *testing.T) {
+		cfg := valid()
+		cfg.OperatingPolicy.MaxUtilizationOfCapacity = 1.5
+		err := cfg.ValidateMode(ModeCapacity)
+		if err == nil {
+			t.Fatal("1.5 should be rejected: it is more than all of the capacity")
+		}
+		if !strings.Contains(err.Error(), "cannot exceed 1") {
+			t.Errorf("err = %v, want it to explain the fraction", err)
+		}
+	})
+
+	t.Run("negative values are rejected", func(t *testing.T) {
+		for _, set := range []func(*Config){
+			func(c *Config) { c.OperatingPolicy.MaxUtilizationOfCapacity = -0.1 },
+			func(c *Config) { c.OperatingPolicy.KneeLatencyMultiple = -1 },
+		} {
+			cfg := valid()
+			set(cfg)
+			if err := cfg.ValidateMode(ModeCapacity); err == nil {
+				t.Errorf("cfg %+v should be rejected", cfg.OperatingPolicy)
+			}
+		}
+	})
+
+	t.Run("a percentile has to be a percentile", func(t *testing.T) {
+		for _, p := range []float64{100, 101, -1} {
+			cfg := valid()
+			cfg.OperatingPolicy.KneePercentile = p
+			if err := cfg.ValidateMode(ModeCapacity); err == nil {
+				t.Errorf("knee_percentile %g should be rejected", p)
+			}
+		}
+	})
+}
+
+// TestOperatingPolicyDefaults documents the two choices the knee rests on.
+func TestOperatingPolicyDefaults(t *testing.T) {
+	var p OperatingPolicy
+
+	if got := p.KneePercentileOr(); got != DefaultKneePercentile {
+		t.Errorf("percentile = %g, want %g", got, float64(DefaultKneePercentile))
+	}
+	if got := p.KneeMultipleOr(); got != DefaultKneeLatencyMultiple {
+		t.Errorf("multiple = %g, want %g", got, DefaultKneeLatencyMultiple)
+	}
+	if p.KneePolicy() {
+		t.Error("an absent policy should ask for nothing")
+	}
+
+	p.KneeLatencyMultiple = 3
+	if !p.KneePolicy() {
+		t.Error("a policy with any setting should be asked for")
+	}
+	if got := p.KneeMultipleOr(); got != 3 {
+		t.Errorf("multiple = %g, want the configured 3", got)
+	}
+}
+
+// TestOperatingPolicyCollectsTheKneePercentile is a real interaction: a config
+// that sets a latency threshold collects only the percentiles that threshold
+// names, so a p95 SLO would leave the knee's default p99 uncollected and the knee
+// silently unfindable.
+func TestOperatingPolicyCollectsTheKneePercentile(t *testing.T) {
+	cfg := &Config{
+		Target: Target{BaseURL: "http://localhost:3000"},
+		Thresholds: Thresholds{
+			Latency: LatencyThresholds{P95: &LatencyThreshold{Max: Duration{}}},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	if len(cfg.Percentiles) != 1 || cfg.Percentiles[0] != 95 {
+		t.Fatalf("percentiles = %v, want just the p95 the SLO names", cfg.Percentiles)
+	}
+
+	cfg.OperatingPolicy.MaxUtilizationOfCapacity = 0.8
+	cfg.ApplyDefaults()
+
+	if !containsFloat(cfg.Percentiles, 99) {
+		t.Errorf("percentiles = %v, want the knee's p99 collected too", cfg.Percentiles)
+	}
+	if !containsFloat(cfg.Percentiles, 95) {
+		t.Errorf("percentiles = %v, want the SLO's p95 kept", cfg.Percentiles)
+	}
+
+	// An explicit knee percentile is what gets collected.
+	cfg.OperatingPolicy.KneePercentile = 99.9
+	cfg.ApplyDefaults()
+	if !containsFloat(cfg.Percentiles, 99.9) {
+		t.Errorf("percentiles = %v, want the configured 99.9", cfg.Percentiles)
+	}
+}
+
+func containsFloat(haystack []float64, needle float64) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+	return false
+}

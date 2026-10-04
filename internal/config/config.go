@@ -109,6 +109,10 @@ type Config struct {
 	Validation    Validation    `yaml:"validation"`
 	LoadGenerator LoadGenerator `yaml:"load_generator"`
 	Collectors    Collectors    `yaml:"collectors"`
+	// OperatingPolicy turns a measured capacity into a rate to run at. Absent
+	// means the report states the capacity and recommends nothing
+	// (PLAN-OUTLINE.md §24).
+	OperatingPolicy OperatingPolicy `yaml:"operating_policy"`
 
 	// preAllocatedExplicit and maxVUsExplicit record whether the user pinned the
 	// VU pool. When they did not, the capacity search re-sizes the pool for
@@ -182,7 +186,54 @@ type Request struct {
 	Headers map[string]string `yaml:"headers"`
 }
 
-// Run holds the fixed-rate run parameters used by `autobench run`.
+// OperatingPolicy turns a measured capacity into a rate to run at.
+//
+// The outline is explicit that a recommendation must not be a hidden judgement
+// (PLAN-OUTLINE.md §24), so this is configured rather than assumed and the report
+// shows the arithmetic rather than asserting a number.
+type OperatingPolicy struct {
+	// MaxUtilizationOfCapacity is the fraction of the measured capacity to treat
+	// as the ceiling, e.g. 0.8 for 80%. Zero computes no policy limit.
+	MaxUtilizationOfCapacity float64 `yaml:"max_utilization_of_capacity"`
+	// KneePercentile is the percentile the latency knee is read from.
+	// Defaults to DefaultKneePercentile.
+	KneePercentile float64 `yaml:"knee_percentile"`
+	// KneeLatencyMultiple is how much slower than at the lowest passing rate
+	// still counts as fine. Defaults to DefaultKneeLatencyMultiple.
+	KneeLatencyMultiple float64 `yaml:"knee_latency_multiple"`
+}
+
+// Defaults for the knee. Both are choices, not laws: p99 is the latency SLO most
+// systems are written against, and "twice as slow as at the bottom" is where a
+// curve has visibly stopped being flat.
+const (
+	DefaultKneePercentile      = 99
+	DefaultKneeLatencyMultiple = 2.0
+)
+
+// KneePercentileOr returns the configured knee percentile, or the default.
+func (o OperatingPolicy) KneePercentileOr() float64 {
+	if o.KneePercentile <= 0 {
+		return DefaultKneePercentile
+	}
+	return o.KneePercentile
+}
+
+// KneeMultipleOr returns the configured knee multiple, or the default.
+func (o OperatingPolicy) KneeMultipleOr() float64 {
+	if o.KneeLatencyMultiple <= 0 {
+		return DefaultKneeLatencyMultiple
+	}
+	return o.KneeLatencyMultiple
+}
+
+// KneePolicy is whether the policy asks for a knee at all. It is asked for
+// whenever the block is present, since the knee is the half that needs no
+// utilisation figure to be useful.
+func (o OperatingPolicy) KneePolicy() bool {
+	return o != (OperatingPolicy{})
+}
+
 type Run struct {
 	Rate     int      `yaml:"rate"`
 	Duration Duration `yaml:"duration"`

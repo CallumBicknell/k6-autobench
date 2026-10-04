@@ -79,6 +79,24 @@ validation:
 #   pre_allocated_vus: 100
 #   max_vus: 400
 
+# A capacity is where the system breaks, which is rarely where you want to run.
+# This turns the measurement into a rate to run at, and the report shows the
+# arithmetic rather than asserting a number:
+#
+#   Latency knee   255/s  (p99 still within 1.1× the 11.1ms seen at 50/s)
+#   Policy limit   306/s  (80% of measured capacity)
+#   Operating range < 255/s
+#     set by the latency knee
+#
+# The knee is the highest passing rate whose latency was still within
+# knee_latency_multiple times the latency at the lowest passing rate. The limit
+# is the lower of the knee and the policy ceiling, so a system that degrades
+# early is not recommended at 80% of a capacity it reached while collapsing.
+# operating_policy:
+#   max_utilization_of_capacity: 0.8
+#   knee_percentile: 99          # optional, default 99
+#   knee_latency_multiple: 2     # optional, default 2
+
 # `autobench capacity examples/api-capacity.yaml --out-dir results/` writes
 # config.yaml, manifest.json, summary.json, report.html and one file per probe.
 # Add `--html report.html` for just the report.

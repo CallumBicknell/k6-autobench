@@ -1418,6 +1418,48 @@ Calculated:
 
 That's much more defensible.
 
+**Implemented (V1.0)**, as `operating_policy`. The config key is exactly the one
+this section proposes, and the report shows the arithmetic:
+
+```text
+  Latency knee   255/s  (p99 still within 1.1× the 11.1ms seen at 50/s)
+  Policy limit   306/s  (80% of measured capacity)
+  Operating range < 255/s
+    set by the latency knee
+```
+
+Three decisions worth recording.
+
+**The knee is the highest passing rate whose latency was still within
+`knee_latency_multiple` times the latency at the lowest passing rate.** The
+multiple is a policy, so it is configured and the report prints it. The baseline
+is the lowest *rate's* reading rather than the lowest reading anywhere on the
+curve, so a dip partway up cannot move the line.
+
+**The default multiple is 2, and it does not reproduce the ~12,500 this section
+guesses at.** On this section's own curve (20, 23, 25, 31, 40, 91, 420, 1800 ms at
+2k through 15k) a 2× multiple gives 10,000/s. That is the better answer: by 12,000/s
+the p99 is 91ms, already 4.5× the floor, so naming it as a rate to operate at
+would be recommending the degradation. The guessed number was read off the
+inflection; the mechanical one is read off the floor.
+
+**The limit is the lower of the knee and the policy ceiling.** Running at 80% of a
+capacity the system reached with latency already collapsed is not a recommendation
+worth making, so a knee below the ceiling wins and the report names which one
+bound it.
+
+Two things came out of building it that this section does not anticipate. A config
+that sets a latency threshold collects only the percentiles that threshold names,
+so a p95 SLO would have left the knee's default p99 uncollected and the knee
+silently unfindable — the policy now unions in the percentile it needs. And the
+block is rendered whenever it is configured, including when it produces nothing,
+because a configured block that silently vanishes leaves the reader wondering
+whether it was read.
+
+A knee is reported as “none found” rather than omitted: a system that goes from
+fine to broken in one step has no knee, the capacity boundary is the whole story,
+and saying so is the finding.
+
 ---
 
 # 25. Track latency as a curve

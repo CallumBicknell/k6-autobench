@@ -384,6 +384,8 @@ func RenderCapacityHTML(w io.Writer, cfg *config.Config, out *search.Outcome, ve
 		page.Generator = out.Validation.Result.Generator
 	}
 
+	page.Facts = append(page.Facts, operatingLimit(out, cfg).facts()...)
+
 	switch {
 	case out.PassingRate > 0 && !out.LowerBoundOnly:
 		page.Headline = commafy(int64(out.Capacity))

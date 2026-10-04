@@ -100,6 +100,14 @@ func (c *Config) ApplyDefaults() {
 	if len(c.Percentiles) == 0 {
 		c.Percentiles = DefaultPercentiles()
 	}
+	// A policy asks for a latency knee, and a knee needs its percentile to have
+	// been collected. A config that sets a latency threshold collects only the
+	// percentiles that threshold names, so a p95 SLO would leave the knee's
+	// default p99 uncollected and the knee silently unfindable.
+	if c.OperatingPolicy.KneePolicy() {
+		c.Percentiles = unionPercentiles(c.Percentiles,
+			[]float64{c.OperatingPolicy.KneePercentileOr()})
+	}
 	sort.Float64s(c.Percentiles)
 
 	if c.LoadGenerator.PreAllocatedVUs <= 0 {
@@ -174,6 +182,9 @@ func (c *Config) ValidateMode(mode Mode) error {
 		return errors.New("run.k6_timeout must not be negative")
 	}
 	if err := c.validateCollectors(); err != nil {
+		return err
+	}
+	if err := c.validateOperatingPolicy(); err != nil {
 		return err
 	}
 	if c.LoadGenerator.MaxVUs < c.LoadGenerator.PreAllocatedVUs {
@@ -253,6 +264,26 @@ func (c *Config) validateAnalysis() error {
 // checks only: whether a source actually answers is discovered at run time and
 // reported as a note, because a target's monitoring being unreachable must never
 // fail a load test.
+// validateOperatingPolicy rejects a policy that could not mean anything.
+func (c *Config) validateOperatingPolicy() error {
+	p := c.OperatingPolicy
+	switch {
+	case p.MaxUtilizationOfCapacity < 0:
+		return errors.New("operating_policy.max_utilization_of_capacity must not be negative")
+	case p.MaxUtilizationOfCapacity > 1:
+		return fmt.Errorf(
+			"operating_policy.max_utilization_of_capacity is a fraction of capacity, "+
+				"so it cannot exceed 1 (got %g)", p.MaxUtilizationOfCapacity)
+	case p.KneePercentile < 0 || p.KneePercentile >= 100:
+		return fmt.Errorf(
+			"operating_policy.knee_percentile must be above 0 and below 100 (got %g)",
+			p.KneePercentile)
+	case p.KneeLatencyMultiple < 0:
+		return errors.New("operating_policy.knee_latency_multiple must not be negative")
+	}
+	return nil
+}
+
 func (c *Config) validateCollectors() error {
 	if c.Collectors.Interval.Duration < 0 {
 		return errors.New("collectors.interval must not be negative")

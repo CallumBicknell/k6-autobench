@@ -137,6 +137,8 @@ func (p *printer) capacity(out *search.Outcome, cfg *config.Config) {
 	for _, note := range out.Notes {
 		p.line("  " + p.paint(cYellow, "⚠ "+note))
 	}
+
+	operatingLimit(out, cfg).render(p)
 }
 
 // capacityVerdict prints the overall verdict and why it was reached.

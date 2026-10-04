@@ -315,6 +315,54 @@ repository is not broken and a missing gate is not mistaken for a passing one.
 `--json` on `compare` writes the comparison itself, so a CI job can archive one
 artefact and still know which two files it compared.
 
+### The latency knee and the operating range
+
+A capacity is where the system breaks. It is usually not where you want to run:
+by the time a curve reaches its breaking point the latency has already collapsed.
+`operating_policy` turns the measurement into a rate to run at.
+
+```yaml
+operating_policy:
+  max_utilization_of_capacity: 0.8   # 80% of the measured capacity
+  knee_percentile: 99                # optional, default 99
+  knee_latency_multiple: 2           # optional, default 2
+```
+
+```text
+  Sustained     12,000 iterations/s
+  Capacity      14,000 iterations/s
+
+  Latency knee  10,000/s  (p99 still within 2× the 20.0ms seen at 2,000/s)
+  Policy limit  11,200/s  (80% of measured capacity)
+  Operating range < 10,000/s
+    set by the latency knee
+```
+
+**The knee is the highest passing rate whose latency was still within
+`knee_latency_multiple` times the latency at the lowest passing rate.** It is
+measured against the lowest *rate's* reading rather than the lowest reading
+anywhere on the curve, so a dip partway up cannot move the line.
+
+Both halves of that are choices, which is why both are configurable. The outline
+is explicit that a recommendation must not be a hidden judgement
+(§24), so the report shows the arithmetic — you can see which rate the floor came
+from and check it against the curve above.
+
+**The limit is the lower of the two.** Running at 80% of a capacity the system
+reached with latency already collapsed is not a recommendation worth making, so a
+knee below the policy ceiling wins, and the report says which one bound it.
+
+The knee is reported even when there is none. A flat curve is a good result, not
+a missing section:
+
+```text
+  Latency knee  none found (no passing rate reached 2× the p99 at the bottom)
+```
+
+A capacity that is only a lower bound cannot bound anything from below, so no
+policy limit is computed from it, and the report says so rather than staying
+silent about a block you configured.
+
 ## Reporting
 
 ### Response classes
@@ -696,6 +744,11 @@ collectors:          # optional: sample a system's own metrics while it is loade
       container: my-worker
   system:
     - name: generator
+
+operating_policy:    # optional: turn the capacity into a rate to run at
+  max_utilization_of_capacity: 0.8
+  knee_percentile: 99          # optional, default 99
+  knee_latency_multiple: 2     # optional, default 2
 ```
 
 Unknown config keys are rejected, so typos fail fast.

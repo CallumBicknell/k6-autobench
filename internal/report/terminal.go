@@ -41,7 +41,7 @@ func (p *printer) line(s string) { fmt.Fprintln(p.w, s) }
 
 // kv prints an aligned "label   value" row.
 func (p *printer) kv(label, value string) {
-	fmt.Fprintf(p.w, "  %-14s%s\n", label, value)
+	fmt.Fprintf(p.w, "  %-16s%s\n", label, value)
 }
 
 // Render writes the full fixed-rate run report. version is the CLI version
