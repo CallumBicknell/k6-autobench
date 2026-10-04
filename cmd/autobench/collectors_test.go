@@ -71,6 +71,65 @@ func TestBuildCollectorsTranslatesTheConfiguration(t *testing.T) {
 	}
 }
 
+// TestBuildCollectorsEveryKind checks each kind of source becomes the collector
+// that reads it, in a fixed order so a report lists its sources the same way
+// every run.
+func TestBuildCollectorsEveryKind(t *testing.T) {
+	cfg := &config.Config{
+		Collectors: config.Collectors{
+			Prometheus: []config.PrometheusSource{{
+				Name: "api", URL: "http://localhost:9090",
+				Queries: []config.PrometheusQuery{{Name: "cpu", Query: "up"}},
+			}},
+			Docker: []config.DockerSource{{Name: "worker", Container: "my-worker", Socket: "/s.sock"}},
+			System: []config.SystemSource{{Name: "generator", Proc: "/proc"}},
+			Kubernetes: []config.KubernetesSource{{
+				Name: "cluster", URL: "https://127.0.0.1:6443",
+				Token: "t", Namespace: "bench", Selector: "app=api",
+				CAFile: "/ca.pem",
+			}},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	built := buildCollectors(cfg)
+	if len(built) != 4 {
+		t.Fatalf("collectors = %d, want 4", len(built))
+	}
+
+	want := []string{"api", "worker", "generator", "cluster"}
+	for i, name := range want {
+		if built[i].Name() != name {
+			t.Errorf("collector %d = %q, want %q", i, built[i].Name(), name)
+		}
+	}
+
+	d, ok := built[1].(*collect.Docker)
+	if !ok {
+		t.Fatalf("second collector is %T, want *collect.Docker", built[1])
+	}
+	if d.Container != "my-worker" || d.Socket != "/s.sock" {
+		t.Errorf("docker collector = %+v", d)
+	}
+
+	s, ok := built[2].(*collect.System)
+	if !ok {
+		t.Fatalf("third collector is %T, want *collect.System", built[2])
+	}
+	if s.Proc != "/proc" {
+		t.Errorf("system collector = %+v", s)
+	}
+
+	k, ok := built[3].(*collect.Kubernetes)
+	if !ok {
+		t.Fatalf("fourth collector is %T, want *collect.Kubernetes", built[3])
+	}
+	if k.URL != "https://127.0.0.1:6443" || k.Token != "t" || k.Namespace != "bench" ||
+		k.Selector != "app=api" || k.CAFile != "/ca.pem" {
+		t.Errorf("kubernetes collector = %+v", k)
+	}
+}
+
 // TestBuildCollectorsDefaultsTheInterval covers a config built without
 // ApplyDefaults, so the collector still samples at a sane rate.
 func TestBuildCollectorsDefaultsTheInterval(t *testing.T) {
@@ -102,16 +161,36 @@ func TestCollectorNotice(t *testing.T) {
 	}
 
 	got := collectorNotice(collectorConfig())
-	want := "api (2 queries every 5s)"
+	want := "api every 5s"
 	if got != want {
+		t.Errorf("notice = %q, want %q", got, want)
+	}
+}
+
+// TestCollectorNoticeNamesEveryKind checks a mixed config lists all its sources.
+func TestCollectorNoticeNamesEveryKind(t *testing.T) {
+	cfg := &config.Config{
+		Collectors: config.Collectors{
+			Prometheus: []config.PrometheusSource{{
+				Name: "api", URL: "http://localhost:9090",
+				Queries: []config.PrometheusQuery{{Name: "cpu", Query: "up"}},
+			}},
+			Docker: []config.DockerSource{{Name: "worker", Container: "w"}},
+			System: []config.SystemSource{{Name: "generator"}},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	want := "api, worker, generator every 5s"
+	if got := collectorNotice(cfg); got != want {
 		t.Errorf("notice = %q, want %q", got, want)
 	}
 }
 
 // TestFmtCollectorsListsEverySource checks several sources are named.
 func TestFmtCollectorsListsEverySource(t *testing.T) {
-	got := fmtCollectors([]string{"api", "postgres"}, 5, 10*time.Second)
-	want := "api, postgres (5 queries every 10s)"
+	got := fmtCollectors([]string{"api", "postgres"}, 10*time.Second)
+	want := "api, postgres every 10s"
 	if got != want {
 		t.Errorf("fmtCollectors = %q, want %q", got, want)
 	}

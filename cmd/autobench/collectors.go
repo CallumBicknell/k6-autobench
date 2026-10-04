@@ -24,7 +24,10 @@ func buildCollectors(cfg *config.Config) []collect.Collector {
 		interval = config.DefaultCollectInterval
 	}
 
-	out := make([]collect.Collector, 0, len(cfg.Collectors.Prometheus))
+	// The order is fixed rather than map-driven, so a report lists its sources
+	// the same way every run.
+	var out []collect.Collector
+
 	for _, src := range cfg.Collectors.Prometheus {
 		queries := make([]collect.Query, 0, len(src.Queries))
 		for _, q := range src.Queries {
@@ -37,6 +40,37 @@ func buildCollectors(cfg *config.Config) []collect.Collector {
 			Interval: interval,
 		})
 	}
+
+	for _, src := range cfg.Collectors.Docker {
+		out = append(out, &collect.Docker{
+			Source:    src.Name,
+			Container: src.Container,
+			Socket:    src.Socket,
+			Interval:  interval,
+		})
+	}
+
+	for _, src := range cfg.Collectors.System {
+		out = append(out, &collect.System{
+			Source:   src.Name,
+			Proc:     src.Proc,
+			Interval: interval,
+		})
+	}
+
+	for _, src := range cfg.Collectors.Kubernetes {
+		out = append(out, &collect.Kubernetes{
+			Source:    src.Name,
+			URL:       src.URL,
+			Token:     src.Token,
+			Namespace: src.Namespace,
+			Selector:  src.Selector,
+			CAFile:    src.CAFile,
+			Insecure:  src.Insecure,
+			Interval:  interval,
+		})
+	}
+
 	return out
 }
 
@@ -46,16 +80,25 @@ func collectorNotice(cfg *config.Config) string {
 	if !cfg.Collectors.Enabled() {
 		return ""
 	}
-	names := make([]string, 0, len(cfg.Collectors.Prometheus))
-	total := 0
+
+	var names []string
 	for _, src := range cfg.Collectors.Prometheus {
 		names = append(names, src.Name)
-		total += len(src.Queries)
 	}
-	return fmtCollectors(names, total, cfg.Collectors.Interval.Duration)
+	for _, src := range cfg.Collectors.Docker {
+		names = append(names, src.Name)
+	}
+	for _, src := range cfg.Collectors.System {
+		names = append(names, src.Name)
+	}
+	for _, src := range cfg.Collectors.Kubernetes {
+		names = append(names, src.Name)
+	}
+
+	return fmtCollectors(names, cfg.Collectors.Interval.Duration)
 }
 
 // fmtCollectors is split out so the notice can be tested without a config.
-func fmtCollectors(names []string, queries int, interval time.Duration) string {
-	return fmt.Sprintf("%s (%d queries every %s)", strings.Join(names, ", "), queries, interval)
+func fmtCollectors(names []string, interval time.Duration) string {
+	return fmt.Sprintf("%s every %s", strings.Join(names, ", "), interval)
 }
