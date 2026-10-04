@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,57 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestDurationJSONRoundTrip is the regression test for a bug that only showed up
+// when something tried to read autobench's own JSON back: Duration marshalled to
+// a string but could not unmarshal from one, so `--json` was write-only.
+func TestDurationJSONRoundTrip(t *testing.T) {
+	tests := []struct {
+		in   string
+		want time.Duration
+	}{
+		{`"30s"`, 30 * time.Second},
+		{`"1m30s"`, 90 * time.Second},
+		{`"500ms"`, 500 * time.Millisecond},
+		{`5`, 5 * time.Second},
+		{`0.5`, 500 * time.Millisecond},
+	}
+
+	for _, tc := range tests {
+		var d Duration
+		if err := json.Unmarshal([]byte(tc.in), &d); err != nil {
+			t.Errorf("unmarshal %s: %v", tc.in, err)
+			continue
+		}
+		if d.Duration != tc.want {
+			t.Errorf("unmarshal %s = %v, want %v", tc.in, d.Duration, tc.want)
+		}
+
+		// And the value it writes can be read again.
+		raw, err := json.Marshal(d)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var back Duration
+		if err := json.Unmarshal(raw, &back); err != nil {
+			t.Errorf("round trip of %v: %v", d.Duration, err)
+			continue
+		}
+		if back.Duration != d.Duration {
+			t.Errorf("round trip = %v, want %v", back.Duration, d.Duration)
+		}
+	}
+}
+
+func TestDurationJSONRejectsGarbage(t *testing.T) {
+	for _, in := range []string{`"soon"`, `""`, `{}`, `[]`, `true`} {
+		var d Duration
+		if err := json.Unmarshal([]byte(in), &d); err == nil {
+			t.Errorf("unmarshal %s should have failed, got %v", in, d.Duration)
+		}
+	}
+}
+
+// TestDurationUnmarshal covers the YAML form, which accepts the same shapes.
 func TestDurationUnmarshal(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

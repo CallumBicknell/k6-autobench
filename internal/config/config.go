@@ -45,6 +45,32 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 // MarshalJSON renders the duration using Go's compact form (e.g. "1m30s").
 func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(d.Duration.String()) }
 
+// UnmarshalJSON reads the compact form back, and accepts a bare number as
+// seconds the way the YAML decoder does.
+//
+// Without this the JSON report was write-only: `--json` produced a file nothing
+// could read back, which only shows up when something tries to -- as `autobench
+// compare` does.
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	// A JSON number is seconds.
+	var secs float64
+	if err := json.Unmarshal(b, &secs); err == nil {
+		d.Duration = time.Duration(secs * float64(time.Second))
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("invalid duration %s", b)
+	}
+	parsed, err := time.ParseDuration(strings.TrimSpace(s))
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", s, err)
+	}
+	d.Duration = parsed
+	return nil
+}
+
 // DefaultPercentiles are collected when the config specifies none.
 func DefaultPercentiles() []float64 { return []float64{50, 75, 90, 95, 99, 99.9} }
 
